@@ -76,6 +76,8 @@ class ViSlamBackend //: public VioBackendInterface
    */
   virtual ~ViSlamBackend() {}
 
+  bool areLandmarksInFrontOfCameras() const { return realtimeGraph_.areLandmarksInFrontOfCameras(); }
+
   /// @name Sensor configuration related
   ///@{
   /**

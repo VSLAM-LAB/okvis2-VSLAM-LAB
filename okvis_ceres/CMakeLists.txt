@@ -34,6 +34,7 @@ add_library(${LIB_NAME}
   include/okvis/ceres/TwoPoseGraphError.hpp
   include/okvis/ceres/implementation/ReprojectionError.hpp
   include/okvis/ceres/ode/ode.hpp
+  include/okvis/ceres/DepthError.hpp
   src/CeresIterationCallback.cpp
   src/ErrorInterface.cpp
   src/HomogeneousPointError.cpp

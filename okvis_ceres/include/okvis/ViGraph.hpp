@@ -74,6 +74,7 @@
 #include <okvis/ceres/RelativePoseError.hpp>
 #include <okvis/ceres/TwoPoseGraphError.hpp>
 #include <okvis/ceres/SpeedAndBiasError.hpp>
+#include <okvis/ceres/DepthError.hpp>
 #include <okvis/ceres/CeresIterationCallback.hpp>
 
 /// \brief okvis Main namespace of this package.
@@ -234,6 +235,48 @@ class ViGraph
    */
   bool setLandmark(LandmarkId id, const Eigen::Vector4d & homogeneousPoint);
 
+  bool addOneSidedDepthError(KeypointIdentifier keypointId)
+  {
+    Observation &obs = observations_.at(keypointId);
+    if (obs.depthError.residualBlockId) {
+      return false;
+    }
+    State &state = states_.at(StateId(keypointId.frameId));
+    //obs.depthError.errorTerm.reset(new ceres::OneSidedDepthError(0.1, 0.001));
+    //obs.depthError.residualBlockId
+    //  = problem_->AddResidualBlock(obs.depthError.errorTerm.get(),
+    //                               nullptr,
+    //                               state.pose->parameters(),
+    //                               landmarks_.at(obs.landmarkId).hPoint->parameters(),
+    //                               state.extrinsics.at(keypointId.cameraIndex)->parameters());
+
+    // remember everywhere
+    landmarks_.at(obs.landmarkId).observations.at(keypointId) = obs;
+    state.observations.at(keypointId) = obs;
+
+    return true;
+  }
+
+  bool removeOneSidedDepthError(KeypointIdentifier keypointId)
+  {
+    Observation &obs = observations_.at(keypointId);
+    if (!obs.depthError.residualBlockId) {
+      return false;
+    }
+    State &state = states_.at(StateId(keypointId.frameId));
+    problem_->RemoveResidualBlock(obs.depthError.residualBlockId);
+    obs.depthError.errorTerm.reset();
+    obs.depthError.residualBlockId = nullptr;
+
+    // remember everywhere
+    landmarks_.at(obs.landmarkId).observations.at(keypointId) = obs;
+    state.observations.at(keypointId) = obs;
+
+    return true;
+  }
+
+  bool areLandmarksInFrontOfCameras() const;
+
   // add/remove observations
   /**
    * @brief Add observation.
@@ -271,6 +314,7 @@ class ViGraph
     observation.errorTerm.reset(new ceres::ReprojectionError<GEOMETRY_TYPE>(
                     multiFrame.template geometryAs<GEOMETRY_TYPE>(keypointId.cameraIndex),
                     keypointId.cameraIndex, measurement, information));
+    //observation.depthError.errorTerm.reset(new ceres::OneSidedDepthError(0.1, 0.001));
 
     State& state = states_.at(StateId(keypointId.frameId));
     observation.residualBlockId = problem_->AddResidualBlock(
@@ -278,6 +322,18 @@ class ViGraph
         useCauchy&&cauchyLossFunctionPtr_ ? cauchyLossFunctionPtr_.get() : nullptr,
         state.pose->parameters(), landmarks_.at(landmarkId).hPoint->parameters(),
         state.extrinsics.at(keypointId.cameraIndex)->parameters());
+    //observation.depthError.residualBlockId
+    //  = problem_->AddResidualBlock(observation.depthError.errorTerm.get(),
+    //                               nullptr,
+    //                               state.pose->parameters(),
+    //                               landmarks_.at(landmarkId).hPoint->parameters(),
+    //                               state.extrinsics.at(keypointId.cameraIndex)->parameters());
+
+    // OKVIS_ASSERT_TRUE(Exception,
+    //                   okvis::ceres::jacobiansCorrect(problem_.get(),
+    //                                                  observation.depthError.residualBlockId),
+    //                   "Jacobian verification failed")
+
     observation.landmarkId = landmarkId;
 
     // remember everywhere
@@ -312,6 +368,7 @@ class ViGraph
     // create error term
     Observation observation;
     observation.errorTerm = reprojectionError->clone();
+    //observation.depthError.errorTerm.reset(new ceres::OneSidedDepthError(0.1, 0.001));
 
     State& state = states_.at(StateId(keypointId.frameId));
     observation.residualBlockId = problem_->AddResidualBlock(
@@ -319,6 +376,12 @@ class ViGraph
         useCauchy&&cauchyLossFunctionPtr_ ? cauchyLossFunctionPtr_.get() : nullptr,
         state.pose->parameters(), landmarks_.at(landmarkId).hPoint->parameters(),
         state.extrinsics.at(keypointId.cameraIndex)->parameters());
+    //observation.depthError.residualBlockId
+    //  = problem_->AddResidualBlock(observation.depthError.errorTerm.get(),
+    //                           nullptr,
+    //                           state.pose->parameters(),
+    //                           landmarks_.at(landmarkId).hPoint->parameters(),
+    //                           state.extrinsics.at(keypointId.cameraIndex)->parameters());
     observation.landmarkId = landmarkId;
 
     // remember everywhere
@@ -506,6 +569,7 @@ protected:
   /// \brief Helper struct for the reprojection error graph edges.
   struct Observation : public GraphEdge<ceres::ReprojectionError2dBase> {
     LandmarkId landmarkId; ///< Landmark ID.
+    GraphEdge<ceres::OneSidedDepthError> depthError; ///< Optionally a depth error.
   };
 
   /// \brief Helper struct for the IMU error graph edges.

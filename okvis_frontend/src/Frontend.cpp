@@ -37,10 +37,11 @@
  * @author Stefan Leutenegger
  */
 
-#include <thread>
+#include "okvis/assert_macros.hpp"
 #include <pthread.h>
 #include <sched.h>
 #include <sys/resource.h>
+#include <thread>
 
 #include <brisk/brisk.h>
 
@@ -650,6 +651,7 @@ bool Frontend::dataAssociationAndInitialization(
       trackingQuality = estimator.trackingQuality(StateId(framesInOut->id()));
       matchMotionStereoTimer.stop();
     }
+    //OKVIS_ASSERT_TRUE(Exception, estimator.areLandmarksInFrontOfCameras(), "after match motion stereo")
 
     // keyframe decision, at the moment only landmarks that match with keyframe are initialised
     *asKeyframe = doWeNeedANewKeyframe(estimator, framesInOut);
@@ -964,6 +966,8 @@ bool Frontend::dataAssociationAndInitialization(
         break;
     }
     matchStereoTimer.stop();
+    //OKVIS_ASSERT_TRUE(Exception, estimator.areLandmarksInFrontOfCameras(), "after stereo")
+
   }
 
 #ifdef OKVIS_USE_NN
@@ -1409,6 +1413,7 @@ int Frontend::matchToMap(Estimator &estimator, const okvis::ViParameters& params
       }
     }
   }
+  //OKVIS_ASSERT_TRUE(Exception, estimator.areLandmarksInFrontOfCameras(), "before ransac")
 
   // remove outliers
   const bool ransacRemoveOutliers = true;
@@ -1416,6 +1421,7 @@ int Frontend::matchToMap(Estimator &estimator, const okvis::ViParameters& params
   runRansac3d2d(estimator, multiFrame->cameraSystem(), multiFrame,
                 ransacRemoveOutliers);
   T_WS1 = estimator.pose(StateId(currentFrameId));
+  //OKVIS_ASSERT_TRUE(Exception, estimator.areLandmarksInFrontOfCameras(), "after ransac")
 
   // do optimisation
   if(!loopClosureLandmarksToUseExclusively && ctr > 2) {
@@ -1434,6 +1440,7 @@ int Frontend::matchToMap(Estimator &estimator, const okvis::ViParameters& params
   }
 
   // now the non-initialised ones
+  //OKVIS_ASSERT_TRUE(Exception, estimator.areLandmarksInFrontOfCameras(), "before non-initialised match to map")
   for (size_t im = 0; im < params.nCameraSystem.numCameras(); ++im) {
     // the current frame to match
     const MultiFramePtr multiFrame = estimator.multiFrame(StateId(currentFrameId));
@@ -1496,6 +1503,7 @@ int Frontend::matchToMap(Estimator &estimator, const okvis::ViParameters& params
       }
     }
   }
+  //OKVIS_ASSERT_TRUE(Exception, estimator.areLandmarksInFrontOfCameras(), "after non-initialised match to map")
 
   // merge landmarks, if loop-closure matching
   if(loopClosureLandmarksToUseExclusively) {
@@ -1508,6 +1516,8 @@ int Frontend::matchToMap(Estimator &estimator, const okvis::ViParameters& params
     runRansac3d2d(estimator, params.nCameraSystem, estimator.multiFrame(StateId(currentFrameId)),
                   removeOutliers);
   }*/
+
+  //OKVIS_ASSERT_TRUE(Exception, estimator.areLandmarksInFrontOfCameras(), "after match to map")
 
   return ctr;
 }
@@ -1693,13 +1703,11 @@ void Frontend::matchToMapByThreadUnitialised(
 
           // check if too close (out of focus)
           const Eigen::Vector3d p_W = hp_W.head<3>()/hp_W[3];
-          if(!isParallel) {
-            if((p_W-r0_W).norm() < 0.2) {
-              isValid = false;
-            }
-            if((p_W-T_WC1.r()).norm() < 0.2) {
-              isValid = false;
-            }
+          if((p_W-r0_W).norm() < 0.2) {
+            isValid = false;
+          }
+          if((p_W-T_WC1.r()).norm() < 0.2) {
+            isValid = false;
           }
           if(!isValid) {
             continue;
@@ -1825,7 +1833,7 @@ int Frontend::matchMotionStereo(Estimator& estimator, const ViParameters &params
             uint32_t distances = briskMatchingThreshold_;
             bool initialisable = false;
             double quality = 0.0;
-            Eigen::Vector4d hps_W;
+            Eigen::Vector4d hps_W(0,0,0,0);
             size_t k1_max=1000;
 
             // pre-fetch frame 0 stuff
@@ -1873,14 +1881,12 @@ int Frontend::matchMotionStereo(Estimator& estimator, const ViParameters &params
                   isValid = false;
                 }
 
-                if(!isParallel) {
-                  hp_W = hp_W/hp_W[3];
-                  if(hp_C0[2]/hp_C0[3] < 0.2) {
-                    isValid = false;
-                  }
-                  if(hp_C1[2]/hp_C1[3] < 0.2) {
-                    isValid = false;
-                  }
+                hp_W = hp_W/hp_W[3];
+                if(hp_C0[2]/hp_C0[3] < 0.2) {
+                  isValid = false;
+                }
+                if(hp_C1[2]/hp_C1[3] < 0.2) {
+                  isValid = false;
                 }
 
                 // remember
@@ -2050,19 +2056,18 @@ void Frontend::matchStereo(Estimator &estimator, std::shared_ptr<okvis::MultiFra
               // check if too close
               const Eigen::Vector4d hp_C0 = (T_WC0.inverse()*hp_W);
               const Eigen::Vector4d hp_C1 = (T_WC1.inverse()*hp_W);
-              if(!isParallel) {
-                hp_W = hp_W/hp_W[3];
 
-                if(hp_C0[2]/hp_C0[3] < 0.05) {
-                  isValid = false;
-                }
-                if(hp_C1[2]/hp_C1[3] <  0.05) {
-                  isValid = false;
-                }
+              hp_W = hp_W/hp_W[3];
 
-                if(e0_W.transpose()*e1_W < 0.8) {
-                  isValid = false;
-                }
+              if(hp_C0[2]/hp_C0[3] < 0.1) {
+                isValid = false;
+              }
+              if(hp_C1[2]/hp_C1[3] <  0.1) {
+                isValid = false;
+              }
+
+              if(e0_W.transpose()*e1_W < 0.8) {
+                isValid = false;
               }
 
               // add observations and initialise

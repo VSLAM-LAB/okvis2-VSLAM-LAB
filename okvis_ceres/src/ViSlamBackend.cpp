@@ -714,6 +714,8 @@ void ViSlamBackend::optimiseRealtimeGraph(
   bool onlyNewestState, bool isInitialised)
 {
 
+  //OKVIS_ASSERT_TRUE(Exception, areLandmarksInFrontOfCameras(), "before optimisation")
+
   // fix current position, if not initialised
   std::unique_ptr<ceres::PoseError> initialFixation;
   ::ceres::ResidualBlockId initialFixationId = nullptr;
@@ -883,6 +885,8 @@ void ViSlamBackend::optimiseRealtimeGraph(
   //if(!isLoopClosing_ && !isLoopClosureAvailable_) {
   //  OKVIS_ASSERT_TRUE(Exception, realtimeGraph_.isSynched(fullGraph_), "not synched");
   //}
+
+  //OKVIS_ASSERT_TRUE(Exception, areLandmarksInFrontOfCameras(), "after optimisation")
 }
 
 bool ViSlamBackend::setOptimisationTimeLimit(double timeLimit, int minIterations)

@@ -179,6 +179,13 @@ bool ViGraphEstimator::mergeLandmark(LandmarkId fromId, LandmarkId intoId,
         observation.second.errorTerm.get(), useLoss ? cauchyLossFunctionPtr_.get() : nullptr,
         state.pose->parameters(), landmarks_.at(intoId).hPoint->parameters(),
         state.extrinsics.at(observation.first.cameraIndex)->parameters());
+    //observation.second.depthError.errorTerm.reset(new ceres::OneSidedDepthError(0.1, 0.001));
+    //observation.second.depthError.residualBlockId
+    //  = problem_->AddResidualBlock(observation.second.depthError.errorTerm.get(),
+    //                               nullptr,
+    //                               state.pose->parameters(),
+    //                               landmarks_.at(intoId).hPoint->parameters(),
+    //                               state.extrinsics.at(observation.first.cameraIndex)->parameters());
     observation.second.landmarkId = intoId;
 
     // remember everywhere

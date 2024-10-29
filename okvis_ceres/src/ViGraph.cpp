@@ -408,6 +408,9 @@ bool ViGraph::removeLandmark(LandmarkId landmarkId)
   // remove all observations
   for(auto observation : landmark.observations) {
     problem_->RemoveResidualBlock(observation.second.residualBlockId);
+    if (observation.second.depthError.residualBlockId) {
+      problem_->RemoveResidualBlock(observation.second.depthError.residualBlockId);
+    }
     observations_.erase(observation.first);
     // also remove it in the state
     StateId stateId(observation.first.frameId);
@@ -479,6 +482,9 @@ bool ViGraph::removeObservation(KeypointIdentifier keypointId)
 
   // remove in ceres
   problem_->RemoveResidualBlock(observation.residualBlockId);
+  if (observation.depthError.residualBlockId) {
+    problem_->RemoveResidualBlock(observation.depthError.residualBlockId);
+  }
 
   // remove everywhere in bookkeeping
   OKVIS_ASSERT_TRUE_DBG(Exception, landmarks_.count(observation.landmarkId),
@@ -665,6 +671,29 @@ bool ViGraph::setLandmark(LandmarkId id, const Eigen::Vector4d &homogeneousPoint
   return true;
 }
 
+bool ViGraph::areLandmarksInFrontOfCameras() const
+{
+  for (const auto &obs : observations_) {
+    Eigen::Vector4d hp_W = landmark(obs.second.landmarkId);
+    kinematics::Transformation T_WS, T_SCi;
+    const StateId stateId(obs.first.frameId);
+    const State &state = states_.at(stateId);
+    T_WS = state.pose->estimate();
+    T_SCi = state.extrinsics.at(obs.first.cameraIndex)->estimate();
+    kinematics::Transformation T_WCi = T_WS * T_SCi;
+    Eigen::Vector4d pos_Ci = T_WCi.inverse() * hp_W;
+    if (pos_Ci[2] * pos_Ci[3] < 0.0) {
+      return false;
+    }
+    if (fabs(pos_Ci[3]) > 1.0e-16) {
+      if (pos_Ci[2] / pos_Ci[3] < 0.05) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 const kinematics::TransformationCacheless & ViGraph::pose(StateId id) const
 {
   OKVIS_ASSERT_TRUE_DBG(Exception, states_.count(id), "state does not exists")
@@ -772,6 +801,135 @@ bool ViGraph::softConstrainExtrinsics(double posStd, double rotStd)
   return true;
 }
 
+/*void ViGraph::updateLandmarks()
+{
+  for (auto it = landmarks_.begin(); it != landmarks_.end(); ++it) {
+    Eigen::Vector4d hp_W = it->second.hPoint->estimate();
+    const size_t num = it->second.observations.size();
+    bool isInitialised = false;
+    double quality = 0.0;
+    bool behind = false;
+    double best_err = 1.0e12;
+    Eigen::Vector4d best_pos(0.0, 0.0, 0.0, 0.0);
+    double minD = 1.0e12;
+    Eigen::Matrix3d H = Eigen::Matrix3d::Zero();
+    bool reversed = false;
+    if (num > 0) {
+      for (const auto &observation : it->second.observations) {
+        kinematics::Transformation T_WS, T_SCi;
+        const StateId stateId(observation.first.frameId);
+        const State &state = states_.at(stateId);
+        T_WS = state.pose->estimate();
+        T_SCi = state.extrinsics.at(observation.first.cameraIndex)->estimate();
+        kinematics::Transformation T_WCi = T_WS * T_SCi;
+        Eigen::Vector4d pos_Ci = T_WCi.inverse() * hp_W;
+        Eigen::Vector3d dir_W = (T_WCi.C() * pos_Ci.head<3>()).normalized();
+
+        if (fabs(pos_Ci[3]) > 1.0e-12) {
+          pos_Ci = pos_Ci / pos_Ci[3];
+        }
+
+        if (pos_Ci[2] < 0.1) {
+          behind = true;
+        }
+        if (pos_Ci[2] < 0.0) {
+          reversed = true;
+          dir_W = -dir_W; // reverse!!
+        }
+
+        // consider only small reprojection errors
+        Eigen::Vector2d err;
+        double *params[3];
+        params[0] = state.pose->parameters();
+        params[1] = it->second.hPoint->parameters();
+        params[2] = state.extrinsics.at(observation.first.cameraIndex)->parameters();
+        double *jacobians[3];
+        double *jacobians_minimal[3];
+        Eigen::Matrix<double, 2, 4> J1;
+        Eigen::Matrix<double, 2, 3> J1_minimal;
+        jacobians[0] = nullptr;
+        jacobians[1] = J1.data();
+        jacobians[2] = nullptr;
+        jacobians_minimal[0] = nullptr;
+        jacobians_minimal[1] = J1_minimal.data();
+        jacobians_minimal[2] = nullptr;
+        observation.second.errorTerm->EvaluateWithMinimalJacobians(params,
+                                                                   err.data(),
+                                                                   jacobians,
+                                                                   jacobians_minimal);
+        const double err_norm = err.norm();
+
+        if (err_norm > 2.5) {
+          //bad = true;
+          continue;
+        }
+
+        if (fabs(pos_Ci[3]) > 1.0e-12) {
+          if (pos_Ci[2] < minD) {
+            minD = pos_Ci[2];
+          }
+        }
+
+        if (err_norm < best_err && pos_Ci.norm() > 0.0001) {
+          // remember best fit
+          // if it was far away, leave it far away; but make sure it's in front
+          // of the camera and at least at 10 cm...
+          if (reversed)
+            std::cout << "@@@@@@@@@@@ " << pos_Ci[2] << std::endl;
+          const double dist = std::max(0.1, pos_Ci.norm());
+          best_pos.head<3>() = T_WCi.r() + dist * dir_W;
+          best_pos[3] = 1.0;
+          best_err = err_norm;
+        }
+
+        H += J1_minimal.transpose() * J1_minimal;
+      }
+    }
+
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> es;
+    es.compute(H);
+    const double s0 = sqrt(std::max(1.0e-12, es.eigenvalues()[0]));
+    quality = (minD - 4.0 / s0) / fabs(std::max(1.0e-12, minD));
+
+    if (quality > 0.04) {
+      isInitialised = true;
+    } else {
+      if (behind && best_pos.norm() > 1.0e-12) {
+        // reset along best ray
+        it->second.hPoint->setEstimate(best_pos);
+      }
+    }
+    // update initialisation
+    it->second.hPoint->setInitialized(isInitialised);
+    it->second.quality = std::max(0.0, quality);
+
+    // remove depth errors, if possible (save time)
+    if (((minD - 10.0 / s0) > 0.1)) {
+      for (auto &observation : it->second.observations) {
+        if (observation.second.depthError.residualBlockId) {
+          removeOneSidedDepthError(observation.first);
+        }
+      }
+    } else {
+      for (auto &observation : it->second.observations) {
+        if (!observation.second.depthError.residualBlockId && !behind) {
+          kinematics::Transformation T_WS, T_SCi;
+          const StateId stateId(observation.first.frameId);
+          const State &state = states_.at(stateId);
+          T_WS = state.pose->estimate();
+          T_SCi = state.extrinsics.at(observation.first.cameraIndex)->estimate();
+          kinematics::Transformation T_WCi = T_WS * T_SCi;
+          Eigen::Vector4d pos_Ci = T_WCi.inverse() * hp_W;
+          pos_Ci = pos_Ci / pos_Ci[3];
+          if (pos_Ci[2] > 0.099) {
+            addOneSidedDepthError(observation.first);
+          }
+        }
+      }
+    }
+  }
+}*/
+
 void ViGraph::updateLandmarks()
 {
   for (auto it = landmarks_.begin(); it != landmarks_.end(); ++it) {
@@ -803,6 +961,7 @@ void ViGraph::updateLandmarks()
           behind = true;
         }
         if(pos_Ci[2] < 0.0) {
+          //std::cout << "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@" << std::endl;
           dir_W = -dir_W; // reverse!!
         }
 
