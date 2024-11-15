@@ -38,6 +38,7 @@
 
 #include <algorithm>
 
+#include <okvis/ceres/TwoPoseExtrinsicsGraphError.hpp>
 #include <okvis/ViGraphEstimator.hpp>
 #include <okvis/MstGraph.hpp>
 
@@ -179,13 +180,6 @@ bool ViGraphEstimator::mergeLandmark(LandmarkId fromId, LandmarkId intoId,
         observation.second.errorTerm.get(), useLoss ? cauchyLossFunctionPtr_.get() : nullptr,
         state.pose->parameters(), landmarks_.at(intoId).hPoint->parameters(),
         state.extrinsics.at(observation.first.cameraIndex)->parameters());
-    //observation.second.depthError.errorTerm.reset(new ceres::OneSidedDepthError(0.1, 0.001));
-    //observation.second.depthError.residualBlockId
-    //  = problem_->AddResidualBlock(observation.second.depthError.errorTerm.get(),
-    //                               nullptr,
-    //                               state.pose->parameters(),
-    //                               landmarks_.at(intoId).hPoint->parameters(),
-    //                               state.extrinsics.at(observation.first.cameraIndex)->parameters());
     observation.second.landmarkId = intoId;
 
     // remember everywhere
@@ -408,7 +402,15 @@ bool ViGraphEstimator::convertToPoseGraphMst(
         StateId(std::min(mstFrameIds_.at(edge.first), mstFrameIds_.at(edge.second)));
     StateId otherStateId =
         StateId(std::max(mstFrameIds_.at(edge.first), mstFrameIds_.at(edge.second)));
-    twoPoseLink.errorTerm.reset(new ceres::TwoPoseGraphError(referenceStateId, otherStateId));
+    if (cameraParametersVec_.at(0).online_calibration.do_extrinsics) {
+      twoPoseLink.errorTerm.reset(
+        new ceres::TwoPoseExtrinsicsGraphError(referenceStateId, otherStateId,
+                                               cameraParametersVec_.size()));
+    } else {
+      twoPoseLink.errorTerm.reset(
+        new ceres::TwoPoseStandardGraphError(referenceStateId, otherStateId,
+                                             cameraParametersVec_.size()));
+    }
     twoPoseLink.state0 = referenceStateId;
     twoPoseLink.state1 = otherStateId;
     State & referenceState = states_.at(referenceStateId);
@@ -543,9 +545,23 @@ bool ViGraphEstimator::convertToPoseGraphMst(
       twoPoseLink.errorTerm->compute();
 
       // add to graph
-      twoPoseLink.residualBlockId = problem_->AddResidualBlock(
-            twoPoseLink.errorTerm.get(), nullptr, referenceState.pose->parameters(),
-            otherState.pose->parameters());
+      if (cameraParametersVec_.at(0).online_calibration.do_extrinsics) {
+        std::vector<double *> pars;
+        pars.push_back(referenceState.pose->parameters());
+        pars.push_back(otherState.pose->parameters());
+        for (const auto &extrinsics : referenceState.extrinsics) {
+          pars.push_back(extrinsics->parameters());
+        }
+        twoPoseLink.residualBlockId = problem_->AddResidualBlock(
+          std::static_pointer_cast<ceres::TwoPoseExtrinsicsGraphError>(twoPoseLink.errorTerm).get(),
+          nullptr,pars);
+      } else {
+        twoPoseLink.residualBlockId = problem_->AddResidualBlock(
+          std::static_pointer_cast<ceres::TwoPoseStandardGraphError>(twoPoseLink.errorTerm).get(),
+          nullptr,
+          referenceState.pose->parameters(),
+          otherState.pose->parameters());
+      }
 
       OKVIS_ASSERT_TRUE_DBG(Exception,
                             referenceState.twoPoseLinks.count(otherStateId) == 0,
@@ -623,7 +639,15 @@ bool ViGraphEstimator::obtainPoseGraphMst(
         StateId(std::min(mstFrameIds_.at(edge.first), mstFrameIds_.at(edge.second)));
     StateId otherStateId =
         StateId(std::max(mstFrameIds_.at(edge.first), mstFrameIds_.at(edge.second)));
-    twoPoseLink.errorTerm.reset(new ceres::TwoPoseGraphError(referenceStateId, otherStateId));
+    if (cameraParametersVec_.at(0).online_calibration.do_extrinsics) {
+      twoPoseLink.errorTerm.reset(
+        new ceres::TwoPoseExtrinsicsGraphError(referenceStateId, otherStateId,
+                                               cameraParametersVec_.size()));
+    } else {
+      twoPoseLink.errorTerm.reset(
+        new ceres::TwoPoseStandardGraphError(referenceStateId, otherStateId,
+                                             cameraParametersVec_.size()));
+    }
     State & referenceState = states_.at(referenceStateId);
     State & otherState = states_.at(otherStateId);
 
@@ -687,7 +711,8 @@ bool ViGraphEstimator::obtainPoseGraphMst(
       numEdges.at(otherStateId.value())--;
 
       // assign output if required
-      poseGraphEdges.push_back(PoseGraphEdge{twoPoseLink.errorTerm, referenceStateId, otherStateId});
+      poseGraphEdges.push_back(
+        PoseGraphEdge{twoPoseLink.errorTerm, referenceStateId, otherStateId});
     } else {
       // do nothing, just remember we got rid of one of the MST edges
       numEdges.at(referenceStateId.value())--;
@@ -715,9 +740,23 @@ bool ViGraphEstimator::addExternalTwoPoseLink(
         "duplicate two pose error, ID "<<otherId.value() << "<->" << referenceId.value())
 
   // add to graph
-  twoPoseConstLink.residualBlockId = problem_->AddResidualBlock(
-        twoPoseConstLink.errorTerm.get(), nullptr, referenceState.pose->parameters(),
-        otherState.pose->parameters());
+  if (cameraParametersVec_.at(0).online_calibration.do_extrinsics) {
+    std::vector<double *> pars;
+    pars.push_back(referenceState.pose->parameters());
+    pars.push_back(otherState.pose->parameters());
+    for (const auto &extrinsics : referenceState.extrinsics) {
+      pars.push_back(extrinsics->parameters());
+    }
+    twoPoseConstLink.residualBlockId
+      = problem_->AddResidualBlock(
+        std::static_pointer_cast<ceres::TwoPoseExtrinsicsGraphErrorConst>(
+          twoPoseConstLink.errorTerm).get(), nullptr, pars);
+  } else {
+    twoPoseConstLink.residualBlockId
+      = problem_->AddResidualBlock(std::static_pointer_cast<ceres::TwoPoseStandardGraphErrorConst>(
+          twoPoseConstLink.errorTerm).get(), nullptr, referenceState.pose->parameters(),
+          otherState.pose->parameters());
+  }
 
   // book-keeping
   referenceState.twoPoseConstLinks[otherId] = twoPoseConstLink;

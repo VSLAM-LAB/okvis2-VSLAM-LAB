@@ -31,13 +31,13 @@
  *********************************************************************************/
 
 /**
- * @file TwoPoseGraphError.cpp
- * @brief Source file for the TwoPoseGraphError class.
+ * @file TwoPoseExtrinsicsGraphError.cpp
+ * @brief Source file for the TwoPoseExtrinsicsGraphError class.
  * @author Stefan Leutenegger
  */
 
 #include <okvis/PseudoInverse.hpp>
-#include <okvis/ceres/TwoPoseGraphError.hpp>
+#include <okvis/ceres/TwoPoseExtrinsicsGraphError.hpp>
 #include <okvis/ceres/ReprojectionError.hpp>
 #include <okvis/assert_macros.hpp>
 #include <okvis/timing/Timer.hpp>
@@ -49,27 +49,34 @@ namespace okvis {
 /// \brief ceres Namespace for ceres-related functionality implemented in okvis.
 namespace ceres {
 
-TwoPoseStandardGraphError::TwoPoseStandardGraphError(StateId referencePoseId, StateId otherPoseId,
-                                                     size_t numCams,
-                                                     bool stayConst)
+TwoPoseExtrinsicsGraphError::TwoPoseExtrinsicsGraphError(
+  StateId referencePoseId, StateId otherPoseId, size_t numCams, bool stayConst)
+
 {
   referencePoseId_ = referencePoseId;
   otherPoseId_ = otherPoseId;
   numCams_ = numCams;
   stayConst_ = stayConst;
+
   errorComputationValid_ = false;
-  H00_.setZero();
-  b0_.setZero();
-  J_.setZero();
-  DeltaX_.setZero();
+
+
+  // base class -- dynamic-size cost function
+  // reference pose:
+  mutable_parameter_block_sizes()->push_back(7);
+
+  // other pose:
+  mutable_parameter_block_sizes()->push_back(7);
 
   // reference extrinsics:
   for (size_t i = 0; i < numCams_; ++i) {
+    mutable_parameter_block_sizes()->push_back(7);
     extrinsicsSize_ += 6;
   }
-  if(!stayConst) {
+  if (!stayConst) {
     // different extrinsics for other pose
-    for(size_t i=0; i<numCams_; ++i) {
+    for (size_t i = 0; i < numCams_; ++i) {
+      mutable_parameter_block_sizes()->push_back(7);
       extrinsicsSize_ += 6;
     }
     extrinsicsParameterBlockInfos_.resize(2 * numCams_);
@@ -78,108 +85,12 @@ TwoPoseStandardGraphError::TwoPoseStandardGraphError(StateId referencePoseId, St
     extrinsicsParameterBlockInfos_.resize(numCams_);
     linearisationPoints_T_SC_.resize(numCams_);
   }
+
+  // this is the error term dimension:
+  set_num_residuals(6 + extrinsicsSize_);
 }
 
-// Add some residuals to this marginalisation error. This means, they will get linearised.
-bool TwoPoseGraphError::addObservation(
-  const KeypointIdentifier &keypointIdentifier,
-  const std::shared_ptr<const ReprojectionError2dBase> &reprojectionError,
-  ::ceres::LossFunction *lossFunction,
-  const std::shared_ptr<ceres::PoseParameterBlock> &pose,
-  const std::shared_ptr<ceres::HomogeneousPointParameterBlock> &hPoint,
-  const std::shared_ptr<ceres::PoseParameterBlock> &extrinsics,
-  bool isDuplication,
-  double weight)
-{
-  errorComputationValid_ = false; // flag that the error computation is invalid
-
-  // check poses
-  OKVIS_ASSERT_TRUE_DBG(Exception, referencePoseId_.isInitialised(), "reference pose not set")
-  OKVIS_ASSERT_TRUE_DBG(Exception, otherPoseId_.isInitialised(), "other pose not set")
-
-  // add observation to bookkeeping
-  const size_t ci = reprojectionError->cameraId();
-  if (weight != 1.0) { // very very hacky.
-    // clone the reprojection error into a new object with half the information...
-    auto reprojectionErrorClone = reprojectionError->clone();
-    reprojectionErrorClone->setInformation(weight * reprojectionErrorClone->information());
-    Observation obs{keypointIdentifier,
-                    pose,
-                    hPoint,
-                    extrinsics,
-                    reprojectionErrorClone,
-                    lossFunction,
-                    false,
-                    isDuplication};
-    observations_[hPoint->id()].push_back(obs);
-  } else {
-    if (isDuplication) {
-      // clone the reprojection error into a new object with half the information...
-      auto reprojectionErrorClone = reprojectionError->clone();
-      reprojectionErrorClone->setInformation(reprojectionErrorClone->information());
-      Observation obs{keypointIdentifier,
-                      pose,
-                      hPoint,
-                      extrinsics,
-                      reprojectionErrorClone,
-                      lossFunction,
-                      false,
-                      true};
-      observations_[hPoint->id()].push_back(obs);
-    } else {
-      // clone the reprojection error into a new object with half the information...
-      auto reprojectionErrorClone = reprojectionError->clone();
-      Observation obs{keypointIdentifier,
-                      pose,
-                      hPoint,
-                      extrinsics,
-                      reprojectionErrorClone,
-                      lossFunction,
-                      false,
-                      false};
-      observations_[hPoint->id()].push_back(obs);
-    }
-  }
-
-  // first parameter: pose
-  size_t poseIdx = 0;
-  if (pose->id() == referencePoseId_.value()) {
-    if (!poseParameterBlockInfos_[0].parameterBlock) {
-      poseParameterBlockInfos_[0] = ParameterBlockInfo<7>(pose, 0);
-      poseIdx = 0;
-    }
-  } else if (pose->id() == otherPoseId_.value()) {
-    if (!poseParameterBlockInfos_[1].parameterBlock) {
-      poseParameterBlockInfos_[1] = ParameterBlockInfo<7>(pose, 0);
-      poseIdx = 1;
-    }
-  } else {
-    OKVIS_THROW(Exception, "pose not registered")
-    return false;
-  }
-
-  // second parameter: landmark
-  if (landmarkParameterBlockId2idx_.find(hPoint->id()) == landmarkParameterBlockId2idx_.end()) {
-    // needs adding
-    landmarkParameterBlockInfos_.push_back(ParameterBlockInfo<4>(hPoint, sparseSize_));
-    landmarkParameterBlockId2idx_[hPoint->id()] = landmarkParameterBlockInfos_.size() - 1;
-    sparseSize_ += 3;
-    // no base_t adding, since we will marginalise all landmarks
-  }
-
-  // third parameter: extrinsics
-  const size_t offset = (stayConst_) ? 0 : poseIdx * numCams_;
-  if (!extrinsicsParameterBlockInfos_[offset + ci].parameterBlock) {
-    extrinsicsParameterBlockInfos_[offset + ci]
-      = ParameterBlockInfo<7>(extrinsics, 6 + offset + ci * 6); // other extrinsics
-    linearisationPoints_T_SC_[offset + ci].reset(
-      new kinematics::Transformation(extrinsics->estimate()));
-  }
-
-  return true;
-}
-
-bool TwoPoseStandardGraphError::compute() {
+bool TwoPoseExtrinsicsGraphError::compute() {
   if(isComputed_) {
     return true; // noting to be done...
   }
@@ -194,17 +105,33 @@ bool TwoPoseStandardGraphError::compute() {
         poseParameterBlockInfos_[0].parameterBlock)->estimate();
   const okvis::kinematics::Transformation T_S0W = T_WS0.inverse();
 
+  // allocate stored GN-System part:
+  H00_.resize(6 + extrinsicsSize_, 6 + extrinsicsSize_);
+  H00_.setZero();
+  b0_.resize(6 + extrinsicsSize_);
+  b0_.setZero();
+
+  // temporarily allocate sparse and sparse-dense part
+  Eigen::Matrix<double, Eigen::Dynamic, 3> H01(6 + extrinsicsSize_, 3);
+  H01.setZero();
+  Eigen::Matrix3d H11;
+  H11.setZero();
+  Eigen::Vector3d b1;
+  b1.setZero();
+
   // go through all the error terms and construct GN system
   bool relPoseSet = false;
-  Eigen::Matrix<double, 6, 6> mH = Eigen::Matrix<double, 6, 6>::Zero();
-  Eigen::Matrix<double, 6, 1> mb = Eigen::Matrix<double, 6, 1>::Zero();
+  Eigen::MatrixXd mH(6 + extrinsicsSize_, 6 + extrinsicsSize_);
+  mH.setZero();
+  Eigen::VectorXd mb(6 + extrinsicsSize_);
+  mb.setZero();
   for (auto &observations : observations_) {
-    Eigen::Matrix<double, 6, 6> H00;
+    Eigen::MatrixXd H00(6 + extrinsicsSize_, 6 + extrinsicsSize_);
     H00.setZero();
-    Eigen::Matrix<double, 6, 1> b0;
+    Eigen::VectorXd b0(6 + extrinsicsSize_);
     b0.setZero();
     // temporarily allocate sparse and sparse-dense part
-    Eigen::Matrix<double, 6, 3> H01;
+    Eigen::MatrixX3d H01(6 + extrinsicsSize_, 3);
     H01.setZero();
     Eigen::Matrix3d H11;
     H11.setZero();
@@ -254,8 +181,8 @@ bool TwoPoseStandardGraphError::compute() {
       Eigen::Matrix<double, 2, 6, Eigen::RowMajor> minimalJacobian0;
       Eigen::Matrix<double, 2, 4, Eigen::RowMajor> jacobian1;
       Eigen::Matrix<double, 2, 3, Eigen::RowMajor> minimalJacobian1;
-      //Eigen::Matrix<double,2,7,Eigen::RowMajor> jacobian2;
-      //Eigen::Matrix<double,2,6,Eigen::RowMajor> minimalJacobian2;
+      Eigen::Matrix<double, 2, 7, Eigen::RowMajor> jacobian2;
+      Eigen::Matrix<double, 2, 6, Eigen::RowMajor> minimalJacobian2;
       double *jacobians[3];
       double *minimalJacobians[3];
       if (isReference) {
@@ -266,9 +193,9 @@ bool TwoPoseStandardGraphError::compute() {
         minimalJacobians[0] = minimalJacobian0.data();
       }
       jacobians[1] = jacobian1.data();
-      jacobians[2] = nullptr; //jacobian2.data();
+      jacobians[2] = jacobian2.data();
       minimalJacobians[1] = minimalJacobian1.data();
-      minimalJacobians[2] = nullptr; //minimalJacobian2.data();
+      minimalJacobians[2] = minimalJacobian2.data();
 
       okvis::kinematics::Transformation T_S0S; // identity as the default (if reference)
       if (!isReference) {
@@ -290,27 +217,26 @@ bool TwoPoseStandardGraphError::compute() {
       }
 
       // assemble parameter pointer
-      const double *params[3];
+      const double* params[3];
       PoseParameterBlock pose(T_S0S, id0, okvis::Time(0));
       params[0] = pose.parameters();
       params[1] = hp_S0.data();
       params[2] = info2.parameters.data();
 
       // evaluate
-      observation.reprojectionError->EvaluateWithMinimalJacobians(params,
-                                                                  residual.data(),
-                                                                  jacobians,
-                                                                  minimalJacobians);
+      observation.reprojectionError->EvaluateWithMinimalJacobians(
+                  params, residual.data(), jacobians, minimalJacobians);
 
       // ignore obvious outliers
-      if (residual.norm() > 3.0) {
+      if(residual.norm()>3.0) {
         continue;
       }
 
       {
         //robustify!!
-        const ::ceres::LossFunction *lossFunction = observation.lossFunction;
+        const ::ceres::LossFunction* lossFunction = observation.lossFunction;
         if (lossFunction) {
+
           // following ceres in internal/ceres/corrector.cc
           const double sq_norm = residual.transpose() * residual;
           double rho[3];
@@ -341,30 +267,36 @@ bool TwoPoseStandardGraphError::compute() {
           }
 
           // correct Jacobians (Equation 11 in BANS)
-          minimalJacobian0 = sqrt_rho1
-                             * (minimalJacobian0
-                                - alpha_sq_norm * residual
-                                    * (residual.transpose() * minimalJacobian0));
-          minimalJacobian1 = sqrt_rho1
-                             * (minimalJacobian1
-                                - alpha_sq_norm * residual
-                                    * (residual.transpose() * minimalJacobian1));
-          //minimalJacobian2 = sqrt_rho1 * (minimalJacobian2 - alpha_sq_norm * residual
-          //                                * (residual.transpose() * minimalJacobian2));
+          minimalJacobian0 = sqrt_rho1 * (minimalJacobian0 - alpha_sq_norm * residual
+                                          * (residual.transpose() * minimalJacobian0));
+          minimalJacobian1 = sqrt_rho1 * (minimalJacobian1 - alpha_sq_norm * residual
+                                          * (residual.transpose() * minimalJacobian1));
+          minimalJacobian2 = sqrt_rho1 * (minimalJacobian2 - alpha_sq_norm * residual
+                                          * (residual.transpose() * minimalJacobian2));
 
           // correct residuals (caution: must be after "correct Jacobians"):
           residual *= residual_scaling;
         }
 
+        const int start2 = int(info2.idx);
+
         // construct GN system: add
-        if (!isReference) {
-          H00 += minimalJacobian0.transpose() * minimalJacobian0;
-          b0 -= minimalJacobian0.transpose() * residual;
-          H01 += minimalJacobian0.transpose() * minimalJacobian1;
+        if(!isReference) {
+          H00.topLeftCorner<6,6>() += minimalJacobian0.transpose()*minimalJacobian0;
+          b0.head<6>() -= minimalJacobian0.transpose()*residual;
+          H01.block<6,3>(0,0) += minimalJacobian0.transpose()*minimalJacobian1;
+
+          H00.block<6, 6>(0, start2) += minimalJacobian0.transpose() * minimalJacobian2;
+          H00.block<6, 6>(start2, 0) += minimalJacobian2.transpose() * minimalJacobian0;
         }
 
-        H11 += minimalJacobian1.transpose() * minimalJacobian1;
-        b1 -= minimalJacobian1.transpose() * residual;
+        H01.block<6,3>(start2, 0) += minimalJacobian2.transpose()*minimalJacobian1;
+
+        H00.block<6,6>(start2, start2) += minimalJacobian2.transpose()*minimalJacobian2;
+        b0.segment<6>(start2) -= minimalJacobian2.transpose()*residual;
+
+        H11 += minimalJacobian1.transpose()*minimalJacobian1;
+        b1 -= minimalJacobian1.transpose()*residual;
       }
 
       // book-keeping: remove/mark internal
@@ -372,7 +304,7 @@ bool TwoPoseStandardGraphError::compute() {
     }
 
     // now marginalise out
-    const Eigen::Matrix<double, 6, 3> W = H01;
+    const Eigen::MatrixX3d W = H01;
     const Eigen::Matrix3d V = H11;
     Eigen::Matrix3d V_inv_sqrt;
     int rank;
@@ -382,7 +314,7 @@ bool TwoPoseStandardGraphError::compute() {
     } else {
       H00_ += H00;
       b0_ += b0;
-      const Eigen::Matrix<double, 6, 3> M = W * V_inv_sqrt;
+      const Eigen::MatrixX3d M = W * V_inv_sqrt;
       mH += M * M.transpose();
       mb += M * (V_inv_sqrt.transpose() * b1);
     }
@@ -393,15 +325,16 @@ bool TwoPoseStandardGraphError::compute() {
   // Compute virtual error and relative Covariance
   // this might be a singular system and we need a decomposition to supply a Jacobian to ceres;
   // therefore we use eigendecomposition
-  Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double,6,6>> saes(H00_);
-  const double tol = 1.0e-8 * double(H00_.cols()) * saes.eigenvalues().array().maxCoeff();
-  const Eigen::Matrix<double, 6, 1> D_sqrt = Eigen::Matrix<double, 6, 1>(
-    (saes.eigenvalues().array() > tol).select(saes.eigenvalues().array().sqrt(), 0));
-  const Eigen::Matrix<double, 6, 1> D_inv_sqrt = Eigen::Matrix<double, 6, 1>(
-    (saes.eigenvalues().array() > tol).select(saes.eigenvalues().array().inverse().sqrt(), 0));
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> saes(H00_);
+  const double tolerance = 1.0e-8 * double(H00_.cols()) * saes.eigenvalues().array().maxCoeff();
+  const Eigen::VectorXd D_sqrt = Eigen::VectorXd((saes.eigenvalues().array() > tolerance).select(
+                saes.eigenvalues().array().sqrt(), 0));
+  const Eigen::VectorXd D_inv_sqrt =
+      Eigen::VectorXd((saes.eigenvalues().array() > tolerance).select(
+                        saes.eigenvalues().array().inverse().sqrt(), 0));
 
   J_ = D_sqrt.asDiagonal() * saes.eigenvectors().transpose();
-  const Eigen::Matrix<double,6,6> M = saes.eigenvectors() * D_inv_sqrt.asDiagonal();
+  const Eigen::MatrixXd M = saes.eigenvectors() * D_inv_sqrt.asDiagonal();
   DeltaX_ = -M * (M.transpose() * b0_);
 
   // book-keeping: sizes
@@ -416,11 +349,11 @@ bool TwoPoseStandardGraphError::compute() {
   return true;
 }
 
-bool TwoPoseStandardGraphError::convertToReprojectionErrors(std::vector<Observation> & observations,
+bool TwoPoseExtrinsicsGraphError::convertToReprojectionErrors(std::vector<Observation> & observations,
                                                  std::vector<KeypointIdentifier> & duplicates) {
   // obtain referene pose
   const okvis::kinematics::Transformation T_WS0 = std::static_pointer_cast<PoseParameterBlock>(
-              poseParameterBlockInfos_[0].parameterBlock)->estimate();
+      poseParameterBlockInfos_[0].parameterBlock)->estimate();
 
   // go through all the observations and add again...
   for (auto &obss : observations_) {
@@ -446,9 +379,8 @@ bool TwoPoseStandardGraphError::convertToReprojectionErrors(std::vector<Observat
         new ceres::HomogeneousPointParameterBlock(hp_W,
                                                   landmarkId,
                                                   observation.hPoint->initialized()));
-\
-      // finally add observation
-      observations.push_back(observation);
+        // finally add observation
+        observations.push_back(observation);
     }
   }
 
@@ -470,28 +402,22 @@ bool TwoPoseStandardGraphError::convertToReprojectionErrors(std::vector<Observat
   return true;
 }
 
-void TwoPoseGraphError::getLandmarks(std::set<uint64_t> & landmarks) const {
-  for(auto it=landmarkParameterBlockId2idx_.begin();
-      it!=landmarkParameterBlockId2idx_.end(); ++it) {
-    landmarks.insert(it->first);
-  }
-}
 
 //This evaluates the error term and additionally computes the Jacobians.
-bool TwoPoseStandardGraphError::Evaluate(double const* const * parameters,
+bool TwoPoseExtrinsicsGraphError::Evaluate(double const* const * parameters,
                                     double* residuals,
                                     double** jacobians) const {
   return EvaluateWithMinimalJacobians(parameters, residuals, jacobians, nullptr);
 }
 
-bool TwoPoseStandardGraphError::EvaluateWithMinimalJacobians(double const* const * parameters,
+bool TwoPoseExtrinsicsGraphError::EvaluateWithMinimalJacobians(double const* const * parameters,
                                   double* residuals, double** jacobians,
                                   double** jacobiansMinimal) const {
   if (!isComputed_) {
     return false;
   }
 
-  Eigen::Map<Eigen::Matrix<double,6,1>> error_weighted(residuals, 6);
+  Eigen::Map<Eigen::VectorXd> error_weighted(residuals, 6 + extrinsicsSize_);
 
   // get the reference pose T_WS0
   const size_t refIdx = 0;
@@ -502,7 +428,8 @@ bool TwoPoseStandardGraphError::EvaluateWithMinimalJacobians(double const* const
   const okvis::kinematics::Transformation T_S0W = T_WS0.inverse();
 
   // the difference to the linearisation point:
-  Eigen::Matrix<double,6,1> DeltaX_linearisationPoint = Eigen::Matrix<double,6,1>::Zero();
+  Eigen::VectorXd DeltaX_linearisationPoint(6 + extrinsicsSize_);
+  DeltaX_linearisationPoint.setZero();
 
   // parse other pose and evaluate deviation from linearisation point
   const size_t idx = 1;
@@ -518,8 +445,33 @@ bool TwoPoseStandardGraphError::EvaluateWithMinimalJacobians(double const* const
   DeltaX_linearisationPoint.segment<3>(startIdx + 3) =
       2.0*(T_S0Si.q() * linearisationPoint_T_S0S1_.q().inverse()).coeffs().head<3>();
 
+  // handle extrinsics
+  int i = 0;
+  for (const auto &extrinsicsInfo : extrinsicsParameterBlockInfos_) {
+    const okvis::kinematics::Transformation T_SCi(Eigen::Vector3d(parameters[2 + i][0],
+                                                                  parameters[2 + i][1],
+                                                                  parameters[2 + i][2]),
+                                                  Eigen::Quaterniond(parameters[2 + i][6],
+                                                                     parameters[2 + i][3],
+                                                                     parameters[2 + i][4],
+                                                                     parameters[2 + i][5])
+                                                    .normalized());
+    if (linearisationPoints_T_SC_[i]) {
+      const double *parLin = extrinsicsInfo.parameters.data();
+      const okvis::kinematics::Transformation
+        T_SCi_lin(Eigen::Vector3d(parLin[0], parLin[1], parLin[2]),
+                  Eigen::Quaterniond(parLin[6], parLin[3], parLin[4], parLin[5]).normalized());
+      DeltaX_linearisationPoint.segment<3>(extrinsicsInfo.idx) =
+        T_SCi.r() - linearisationPoints_T_SC_[i]->r();
+      DeltaX_linearisationPoint.segment<3>(extrinsicsInfo.idx + 3)
+        = 2.0 * (T_SCi.q() * linearisationPoints_T_SC_[i]->q().inverse()).coeffs().head<3>();
+    }
+    i++;
+  }
+
   // the unweighted error term
-  const Eigen::Matrix<double,6,1> error = DeltaX_ + DeltaX_linearisationPoint;
+  Eigen::VectorXd error(6 + extrinsicsSize_);
+  error = DeltaX_ + DeltaX_linearisationPoint;
 
   // and with the already factored information matrix:
   error_weighted = J_ * error;
@@ -547,7 +499,7 @@ bool TwoPoseStandardGraphError::EvaluateWithMinimalJacobians(double const* const
       const size_t startIdx = 0;
 
       // the minimal jacobian
-      Eigen::Matrix<double, 6, 6, Eigen::RowMajor> Jmin;
+      Eigen::MatrixXd Jmin(6+extrinsicsSize_,6);
 
       // handle non-reference
       const okvis::kinematics::Transformation T_WS(Eigen::Vector3d(parameters[idx][0],
@@ -563,21 +515,21 @@ bool TwoPoseStandardGraphError::EvaluateWithMinimalJacobians(double const* const
                                         * okvis::kinematics::oplus(
                                           T_WS.q() * linearisationPoint_T_S0S1_.q().inverse()))
                                          .topLeftCorner<3, 3>();
-      Jmin = J_.block<6,6>(0,startIdx)*Jerr;
+      Jmin = J_.block(0,startIdx,6+extrinsicsSize_,6)*Jerr;
 
       // we also handle the reference here
       if(jacobians[refIdx]) {
         JerrRef.block<3,3>(startIdx, 0) = -T_S0W.C();
-        JerrRef.block<3, 3>(startIdx, 0 + 3) = T_S0W.C()
-                                               * okvis::kinematics::crossMx(T_WS.r() - T_WS0.r());
+        JerrRef.block<3,3>(startIdx, 0+3) =
+          T_S0W.C()*okvis::kinematics::crossMx(T_WS.r()-T_WS0.r());
         JerrRef.block<3,3>(startIdx+3, 0+3) = -Jerr.bottomRightCorner<3,3>();
       }
 
       // map minimal Jacobian if requested
       if(jacobiansMinimal){
         if(jacobiansMinimal[idx]) {
-          Eigen::Map<Eigen::Matrix<double, 6, 6, Eigen::RowMajor>> JminMapped(
-                jacobiansMinimal[idx]);
+          Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, 6, Eigen::RowMajor>>
+            JminMapped(jacobiansMinimal[idx], 6+extrinsicsSize_, 6);
           JminMapped = Jmin;
         }
       }
@@ -589,7 +541,8 @@ bool TwoPoseStandardGraphError::EvaluateWithMinimalJacobians(double const* const
         PoseManifold::minusJacobian(parameters[idx], J_lift.data());
 
         // hallucinate Jacobian w.r.t. state
-        Eigen::Map<Eigen::Matrix<double, 6, 7, Eigen::RowMajor>> J(jacobians[idx]);
+        Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, 7, Eigen::RowMajor>>
+          J(jacobians[idx], 6+extrinsicsSize_, 7);
         J = Jmin * J_lift;
       }
     }
@@ -597,13 +550,14 @@ bool TwoPoseStandardGraphError::EvaluateWithMinimalJacobians(double const* const
     // now handle the overall Jacobian of the reference pose separately:
     if(jacobians[refIdx]) {
       // the minimal jacobian
-      const Eigen::Matrix<double, 6, 6, Eigen::RowMajor> Jmin =  J_ * JerrRef;
+      const Eigen::Matrix<double, Eigen::Dynamic, 6, Eigen::RowMajor> Jmin =
+        J_.block(0, 0, 6+extrinsicsSize_,6) * JerrRef;
 
       // map if requested
       if(jacobiansMinimal) {
         if(jacobiansMinimal[refIdx]) {
-          Eigen::Map<Eigen::Matrix<double, 6, 6, Eigen::RowMajor>> JminMapped(
-            jacobiansMinimal[refIdx]);
+          Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, 6, Eigen::RowMajor>> JminMapped(
+                jacobiansMinimal[refIdx], 6+extrinsicsSize_, 6);
           JminMapped = Jmin;
         }
       }
@@ -615,8 +569,59 @@ bool TwoPoseStandardGraphError::EvaluateWithMinimalJacobians(double const* const
         PoseManifold::minusJacobian(parameters[refIdx], J_lift.data());
 
         // hallucinate Jacobian w.r.t. state
-        Eigen::Map<Eigen::Matrix<double, 6, 7, Eigen::RowMajor>> J(jacobians[refIdx]);
+        Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, 7, Eigen::RowMajor>>
+          J(jacobians[refIdx], 6+extrinsicsSize_, 7);
         J = Jmin * J_lift;
+      }
+    }
+
+    // now the extrinsics Jacobians
+    for (size_t i=0; i<extrinsicsParameterBlockInfos_.size(); ++i) {
+      int extrinsicsIdx = i+2;
+      const okvis::kinematics::Transformation T_SCi(Eigen::Vector3d(parameters[extrinsicsIdx][0],
+                                                                    parameters[extrinsicsIdx][1],
+                                                                    parameters[extrinsicsIdx][2]),
+                                                    Eigen::Quaterniond(parameters[extrinsicsIdx][6],
+                                                                       parameters[extrinsicsIdx][3],
+                                                                       parameters[extrinsicsIdx][4],
+                                                                       parameters[extrinsicsIdx][5])
+                                                      .normalized());
+
+
+      Eigen::Matrix<double, 6, 6> Jerrex = Eigen::Matrix<double, 6, 6>::Zero();
+      if (linearisationPoints_T_SC_[i]) {
+        const okvis::kinematics::Transformation & T_SCi_lin
+          = *linearisationPoints_T_SC_[i];
+        Jerrex.topLeftCorner<3, 3>() = Eigen::Matrix3d::Identity();
+        Jerrex.bottomRightCorner<3, 3>()
+          = (okvis::kinematics::oplus(T_SCi.q() * T_SCi_lin.q().inverse())).topLeftCorner<3, 3>();
+      }
+
+      if (jacobians[extrinsicsIdx]) {
+        // the minimal jacobian
+        const Eigen::Matrix<double, Eigen::Dynamic, 6, Eigen::RowMajor> Jmin
+          = J_.block(0, 6+i*6, 6+extrinsicsSize_, 6) * Jerrex;
+
+        // map if requested
+        if(jacobiansMinimal) {
+          if(jacobiansMinimal[extrinsicsIdx]) {
+            Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, 6, Eigen::RowMajor>> JminMapped(
+              jacobiansMinimal[extrinsicsIdx], 6+extrinsicsSize_, 6);
+            JminMapped = Jmin;
+          }
+        }
+
+        // map actual reference Jacobian if requested
+        if(jacobians[extrinsicsIdx]) {
+          // pseudo inverse of the local parametrization Jacobian:
+          Eigen::Matrix<double, 6, 7, Eigen::RowMajor> J_lift;
+          PoseManifold::minusJacobian(parameters[extrinsicsIdx], J_lift.data());
+
+          // hallucinate Jacobian w.r.t. state
+          Eigen::Map<Eigen::Matrix<double,Eigen::Dynamic, 7, Eigen::RowMajor>> J(
+            jacobians[extrinsicsIdx], J_.rows(), 7);
+          J = Jmin * J_lift;
+        }
       }
     }
   }
@@ -624,17 +629,20 @@ bool TwoPoseStandardGraphError::EvaluateWithMinimalJacobians(double const* const
   return true;
 }
 
-std::shared_ptr<TwoPoseGraphErrorConst>
-TwoPoseStandardGraphError::cloneTwoPoseGraphErrorConst() const {
+std::shared_ptr<TwoPoseGraphErrorConst> TwoPoseExtrinsicsGraphError::cloneTwoPoseGraphErrorConst()
+  const
+{
   return std::shared_ptr<TwoPoseGraphErrorConst>(
-    new TwoPoseStandardGraphErrorConst(DeltaX_, J_, linearisationPoint_T_S0S1_));
+        new TwoPoseExtrinsicsGraphErrorConst(
+          DeltaX_, J_, linearisationPoint_T_S0S1_, linearisationPoints_T_SC_));
 }
 
-double TwoPoseStandardGraphError::strength() const {
+double TwoPoseExtrinsicsGraphError::strength() const {
   if(isComputed_) {
     Eigen::Matrix<double, 6, 6> H00inv;
+    const Eigen::Matrix<double, 6, 6> H00 = H00_.topLeftCorner<6, 6>();
     int rank;
-    PseudoInverse::symm(H00_, H00inv, 1.0e-6, &rank);
+    PseudoInverse::symm(H00, H00inv, 1.0e-6, &rank);
     if(rank<6) {
       return 0.0;
     }
@@ -643,45 +651,97 @@ double TwoPoseStandardGraphError::strength() const {
   return 0.0;
 }
 
-bool TwoPoseStandardGraphErrorConst::Evaluate(
-    const double * const *parameters, double *residuals, double **jacobians) const {
+TwoPoseExtrinsicsGraphErrorConst::TwoPoseExtrinsicsGraphErrorConst(
+  const Eigen::VectorXd &DeltaX,
+  const Eigen::MatrixXd &J,
+  const kinematics::Transformation &linearisationPoint_T_S0S1,
+  const std::vector<std::shared_ptr<kinematics::Transformation>> &linearisationPoints_T_SC)
+    : DeltaX_(DeltaX)
+    , J_(J)
+    , linearisationPoint_T_S0S1_(linearisationPoint_T_S0S1)
+    , linearisationPoints_T_SC_(linearisationPoints_T_SC)
+{
+  // take care of internal book-keeping
+  const size_t numCams = (DeltaX.size() - 6) / 6;
+  mutable_parameter_block_sizes()->push_back(7); // reference pose
+  mutable_parameter_block_sizes()->push_back(7); // other pose
+  for (size_t i = 0; i < numCams; ++i) {
+    mutable_parameter_block_sizes()->push_back(7);
+  }
+  set_num_residuals(DeltaX.size());
+}
+
+bool TwoPoseExtrinsicsGraphErrorConst::Evaluate(const double *const *parameters,
+                                                double *residuals,
+                                                double **jacobians) const
+{
   return EvaluateWithMinimalJacobians(parameters, residuals, jacobians, nullptr);
 }
 
-bool TwoPoseStandardGraphErrorConst::EvaluateWithMinimalJacobians(
-    const double * const *parameters, double *residuals, double **jacobians,
-    double **jacobiansMinimal) const
+bool TwoPoseExtrinsicsGraphErrorConst::EvaluateWithMinimalJacobians(double const *const *parameters,
+                                                                    double *residuals,
+                                                                    double **jacobians,
+                                                                    double **jacobiansMinimal) const
 {
+  const int extrinsicsSize = DeltaX_.size() - 6;
 
-  Eigen::Map<Eigen::Matrix<double,6,1>> error_weighted(residuals, 6);
+  Eigen::Map<Eigen::VectorXd> error_weighted(residuals, 6 + extrinsicsSize);
 
   // get the reference pose T_WS0
   const size_t refIdx = 0;
-  const okvis::kinematics::Transformation T_WS0(
-        Eigen::Vector3d(parameters[refIdx][0],parameters[refIdx][1],parameters[refIdx][2]),
-        Eigen::Quaterniond(parameters[refIdx][6],parameters[refIdx][3],parameters[refIdx][4],
-      parameters[refIdx][5]).normalized());
+  const okvis::kinematics::Transformation T_WS0(Eigen::Vector3d(parameters[refIdx][0],
+                                                                parameters[refIdx][1],
+                                                                parameters[refIdx][2]),
+                                                Eigen::Quaterniond(parameters[refIdx][6],
+                                                                   parameters[refIdx][3],
+                                                                   parameters[refIdx][4],
+                                                                   parameters[refIdx][5])
+                                                  .normalized());
   const okvis::kinematics::Transformation T_S0W = T_WS0.inverse();
 
   // the difference to the linearisation point:
-  Eigen::Matrix<double,6,1> DeltaX_linearisationPoint = Eigen::Matrix<double,6,1>::Zero();
+  Eigen::VectorXd DeltaX_linearisationPoint(6 + extrinsicsSize);
+  DeltaX_linearisationPoint.setZero();
 
   // parse other pose and evaluate deviation from linearisation point
   const size_t idx = 1;
   const size_t startIdx = 0;
   // compute difference to relative pose stored as linearisation point
-  const okvis::kinematics::Transformation T_WSi(
-        Eigen::Vector3d(parameters[idx][0],parameters[idx][1],parameters[idx][2]),
-        Eigen::Quaterniond(parameters[idx][6],parameters[idx][3],parameters[idx][4],
-      parameters[idx][5]).normalized());
+  const okvis::kinematics::Transformation T_WSi(Eigen::Vector3d(parameters[idx][0],
+                                                                parameters[idx][1],
+                                                                parameters[idx][2]),
+                                                Eigen::Quaterniond(parameters[idx][6],
+                                                                   parameters[idx][3],
+                                                                   parameters[idx][4],
+                                                                   parameters[idx][5])
+                                                  .normalized());
   const okvis::kinematics::Transformation T_S0Si = T_S0W * T_WSi;
-  DeltaX_linearisationPoint.segment<3>(startIdx) =
-      T_S0Si.r() - linearisationPoint_T_S0S1_.r();
-  DeltaX_linearisationPoint.segment<3>(startIdx + 3) =
-      2*(T_S0Si.q() * linearisationPoint_T_S0S1_.q().inverse()).coeffs().head<3>();
+  DeltaX_linearisationPoint.segment<3>(startIdx) = T_S0Si.r() - linearisationPoint_T_S0S1_.r();
+  DeltaX_linearisationPoint.segment<3>(startIdx + 3)
+    = 2.0 * (T_S0Si.q() * linearisationPoint_T_S0S1_.q().inverse()).coeffs().head<3>();
+
+  // handle extrinsics
+  int i = 0;
+  for (const auto &T_SCi_lin : linearisationPoints_T_SC_) {
+    const okvis::kinematics::Transformation T_SCi(Eigen::Vector3d(parameters[2 + i][0],
+                                                                  parameters[2 + i][1],
+                                                                  parameters[2 + i][2]),
+                                                  Eigen::Quaterniond(parameters[2 + i][6],
+                                                                     parameters[2 + i][3],
+                                                                     parameters[2 + i][4],
+                                                                     parameters[2 + i][5])
+                                                    .normalized());
+    if (T_SCi_lin) {
+      DeltaX_linearisationPoint.segment<3>(6 + i * 6) = T_SCi.r() - T_SCi_lin->r();
+      DeltaX_linearisationPoint.segment<3>(6 + i * 6 + 3)
+        = 2.0 * (T_SCi.q() * T_SCi_lin->q().inverse()).coeffs().head<3>();
+    }
+    i++;
+  }
 
   // the unweighted error term
-  const Eigen::Matrix<double,6,1> error = DeltaX_ + DeltaX_linearisationPoint;
+  Eigen::VectorXd error(6 + extrinsicsSize);
+  error = DeltaX_ + DeltaX_linearisationPoint;
 
   // and with the already factored information matrix:
   error_weighted = J_ * error;
@@ -697,19 +757,18 @@ bool TwoPoseStandardGraphErrorConst::EvaluateWithMinimalJacobians(
   ///       0  0  0  0  0  X  0
   ///       0  0  0  0  0  0  X
   ///
-  if(jacobians || jacobiansMinimal) {
+  if (jacobians || jacobiansMinimal) {
     // allocate the jacobian w.r.t. the reference pose separately:
-    Eigen::Matrix<double, 6, 6, Eigen::RowMajor> JerrRef =
-        Eigen::Matrix<double, 6, 6, Eigen::RowMajor>::Zero();
+    Eigen::Matrix<double, 6, 6, Eigen::RowMajor> JerrRef
+      = Eigen::Matrix<double, 6, 6, Eigen::RowMajor>::Zero();
 
     // handle non-reference first
     const size_t idx = 1;
-    if(jacobians[idx]) {
-
+    if (jacobians[idx]) {
       const size_t startIdx = 0;
 
       // the minimal jacobian
-      Eigen::Matrix<double, 6, 6, Eigen::RowMajor> Jmin;
+      Eigen::MatrixXd Jmin(6 + extrinsicsSize, 6);
 
       // handle non-reference
       const okvis::kinematics::Transformation T_WS(Eigen::Vector3d(parameters[idx][0],
@@ -719,66 +778,119 @@ bool TwoPoseStandardGraphErrorConst::EvaluateWithMinimalJacobians(
                                                                       parameters[idx][3],
                                                                       parameters[idx][4],
                                                                       parameters[idx][5]));
-      Eigen::Matrix<double,6,6> Jerr = Eigen::Matrix<double,6,6>::Zero();
-      Jerr.topLeftCorner<3,3>() = T_S0W.C();
+      Eigen::Matrix<double, 6, 6> Jerr = Eigen::Matrix<double, 6, 6>::Zero();
+      Jerr.topLeftCorner<3, 3>() = T_S0W.C();
       Jerr.bottomRightCorner<3, 3>() = (okvis::kinematics::plus(T_WS0.q().inverse())
                                         * okvis::kinematics::oplus(
                                           T_WS.q() * linearisationPoint_T_S0S1_.q().inverse()))
                                          .topLeftCorner<3, 3>();
-      Jmin = J_.block<6,6>(0,startIdx)*Jerr;
+      Jmin = J_.block(0, startIdx, 6 + extrinsicsSize, 6) * Jerr;
 
       // we also handle the reference here
-      if(jacobians[refIdx]) {
-        JerrRef.block<3,3>(startIdx, 0) = -T_S0W.C();
+      if (jacobians[refIdx]) {
+        JerrRef.block<3, 3>(startIdx, 0) = -T_S0W.C();
         JerrRef.block<3, 3>(startIdx, 0 + 3) = T_S0W.C()
                                                * okvis::kinematics::crossMx(T_WS.r() - T_WS0.r());
-        JerrRef.block<3,3>(startIdx+3, 0+3) = -Jerr.bottomRightCorner<3,3>();
+        JerrRef.block<3, 3>(startIdx + 3, 0 + 3) = -Jerr.bottomRightCorner<3, 3>();
       }
 
       // map minimal Jacobian if requested
-      if(jacobiansMinimal){
-        if(jacobiansMinimal[idx]) {
-          Eigen::Map<Eigen::Matrix<double, 6, 6, Eigen::RowMajor>> JminMapped(
-                jacobiansMinimal[idx]);
+      if (jacobiansMinimal) {
+        if (jacobiansMinimal[idx]) {
+          Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, 6, Eigen::RowMajor>>
+            JminMapped(jacobiansMinimal[idx], 6 + extrinsicsSize, 6);
           JminMapped = Jmin;
         }
       }
 
       // and assign the actual Jacobian
-      if(jacobians[idx]) {
+      if (jacobians[idx]) {
         // pseudo inverse of the local parametrization Jacobian:
         Eigen::Matrix<double, 6, 7, Eigen::RowMajor> J_lift;
         PoseManifold::minusJacobian(parameters[idx], J_lift.data());
 
         // hallucinate Jacobian w.r.t. state
-        Eigen::Map<Eigen::Matrix<double, 6, 7, Eigen::RowMajor>> J(jacobians[idx]);
+        Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, 7, Eigen::RowMajor>> J(jacobians[idx],
+                                                                                6 + extrinsicsSize,
+                                                                                7);
         J = Jmin * J_lift;
       }
     }
 
     // now handle the overall Jacobian of the reference pose separately:
-    if(jacobians[refIdx]) {
+    if (jacobians[refIdx]) {
       // the minimal jacobian
-      const Eigen::Matrix<double, 6, 6, Eigen::RowMajor> Jmin =  J_ * JerrRef;
+      const Eigen::Matrix<double, Eigen::Dynamic, 6, Eigen::RowMajor> Jmin
+        = J_.block(0, 0, 6 + extrinsicsSize, 6) * JerrRef;
 
       // map if requested
-      if(jacobiansMinimal) {
-        if(jacobiansMinimal[refIdx]) {
-          Eigen::Map<Eigen::Matrix<double, 6, 6, Eigen::RowMajor>> JminMapped(
-                jacobiansMinimal[refIdx]);
+      if (jacobiansMinimal) {
+        if (jacobiansMinimal[refIdx]) {
+          Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, 6, Eigen::RowMajor>>
+            JminMapped(jacobiansMinimal[refIdx], 6 + extrinsicsSize, 6);
           JminMapped = Jmin;
         }
       }
 
       // map actual reference Jacobian if requested
-      if(jacobians[refIdx]) {
+      if (jacobians[refIdx]) {
         // pseudo inverse of the local parametrization Jacobian:
         Eigen::Matrix<double, 6, 7, Eigen::RowMajor> J_lift;
         PoseManifold::minusJacobian(parameters[refIdx], J_lift.data());
 
         // hallucinate Jacobian w.r.t. state
-        Eigen::Map<Eigen::Matrix<double, 6, 7, Eigen::RowMajor>> J(jacobians[refIdx]);
+        Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, 7, Eigen::RowMajor>> J(jacobians[refIdx],
+                                                                                6 + extrinsicsSize,
+                                                                                7);
         J = Jmin * J_lift;
+      }
+    }
+
+    // now the extrinsics Jacobians
+    for (size_t i = 0; i < linearisationPoints_T_SC_.size(); ++i) {
+      if (jacobians[i + 2]) {
+        // the minimal jacobian
+        const okvis::kinematics::Transformation T_SCi(Eigen::Vector3d(parameters[2 + i][0],
+                                                                      parameters[2 + i][1],
+                                                                      parameters[2 + i][2]),
+                                                      Eigen::Quaterniond(parameters[2 + i][6],
+                                                                         parameters[2 + i][3],
+                                                                         parameters[2 + i][4],
+                                                                         parameters[2 + i][5])
+                                                        .normalized());
+
+        Eigen::Matrix<double, 6, 6> Jerrex = Eigen::Matrix<double, 6, 6>::Zero();
+        if (linearisationPoints_T_SC_[i]) {
+          Jerrex.topLeftCorner<3, 3>() = Eigen::Matrix3d::Identity();
+          Jerrex.bottomRightCorner<3, 3>() = (okvis::kinematics::oplus(
+                                                T_SCi.q()
+                                                * linearisationPoints_T_SC_[i]->q().inverse()))
+                                               .topLeftCorner<3, 3>();
+        }
+
+        const Eigen::Matrix<double, Eigen::Dynamic, 6, Eigen::RowMajor> Jmin
+          = J_.block(0, 6+i*6, 6+extrinsicsSize, 6) * Jerrex;
+
+        // map if requested
+        if(jacobiansMinimal) {
+          if(jacobiansMinimal[i+2]) {
+            Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, 6, Eigen::RowMajor>> JminMapped(
+              jacobiansMinimal[i+2], 6+extrinsicsSize, 6);
+            JminMapped = Jmin;
+          }
+        }
+
+        // map actual reference Jacobian if requested
+        if(jacobians[i+2]) {
+          // pseudo inverse of the local parametrization Jacobian:
+          Eigen::Matrix<double, 6, 7, Eigen::RowMajor> J_lift;
+          PoseManifold::minusJacobian(parameters[i+2], J_lift.data());
+
+          // hallucinate Jacobian w.r.t. state
+          Eigen::Map<Eigen::Matrix<double,Eigen::Dynamic, 7, Eigen::RowMajor>> J(
+            jacobians[i+2], J_.rows(), 7);
+          J = Jmin * J_lift;
+        }
       }
     }
   }

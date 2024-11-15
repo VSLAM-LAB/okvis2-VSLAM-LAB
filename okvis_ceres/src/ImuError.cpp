@@ -821,11 +821,6 @@ bool ImuError::EvaluateWithMinimalJacobians(double const* const * parameters,
   bool success = true;
 
   Eigen::Map<Eigen::Matrix<double, 15, 1> > weighted_error(residuals);
-  /* don't evaluate constant cost (**hack**)
-  if(!jacobians) {
-    weighted_error.setZero();
-    return true;
-  }*/
 
   // get poses
   const okvis::kinematics::Transformation T_WS_0(

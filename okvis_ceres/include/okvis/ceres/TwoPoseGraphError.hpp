@@ -58,33 +58,15 @@ namespace okvis {
 namespace ceres {
 
 class TwoPoseGraphErrorConst;
+class TwoPoseStandardGraphError;
 
-/// \brief Relative error between two poses. \todo also use non-const extrinsics...
-class TwoPoseGraphError : public ::ceres::SizedCostFunction<
-    6 /* number of residuals */,
-    7, /* size of first parameter */
-    7 /* size of second parameter */>, public ErrorInterface {
- public:
-
+class TwoPoseGraphError : public ErrorInterface {
+  public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
   OKVIS_DEFINE_EXCEPTION(Exception,std::runtime_error)
 
-  /// \brief The base class type.
-  typedef ::ceres::SizedCostFunction<6, 7, 7> base_t;
-
-  /// \brief Number of residuals (6).
-  static const int kNumResiduals = 6;
-
-  /// \brief Constructor.
-  TwoPoseGraphError();
-
-  /// \brief Simple constructor with the two pose IDs.
-  /// \param referencePoseId The reference pose ID.
-  /// \param otherPoseId The ID of the other pose.
-  TwoPoseGraphError(StateId referencePoseId, StateId otherPoseId);
-
   /// \brief Trivial destructor.
-  virtual ~TwoPoseGraphError() override = default;
+  ~TwoPoseGraphError() = default;
 
   /// \brief Set the two pose IDs.
   /// \param referencePoseId The reference pose ID.
@@ -137,21 +119,123 @@ class TwoPoseGraphError : public ::ceres::SizedCostFunction<
   /// @param[out] observations The observations originally passed.
   /// @param[out] duplicates Indicates which ones had been added originally as duplications.
   /// @return True on success.
-  bool convertToReprojectionErrors(std::vector<Observation> & observations,
-                                   std::vector<KeypointIdentifier> & duplicates);
+  virtual bool convertToReprojectionErrors(std::vector<Observation> & observations,
+                                   std::vector<KeypointIdentifier> & duplicates) = 0;
 
   /// @brief Access passed observations.
   /// @param[out] observations The observations originally passed.
   /// @return The number of observations.
   int getObservations(std::vector<Observation> & observations) const {
-    observations = observations_;
-    return int(observations_.size());
+    for (const auto &obss : observations_) {
+      for (const auto &obs : obss.second) {
+        observations.push_back(obs);
+      }
+    }
+    return int(observations.size());
   }
-
 
   /// @brief This computes a relative pose error from the observations.
   /// @return True on success.
-  bool compute();
+  virtual bool compute() = 0;
+
+  /// @brief The strength of this link (regarding position uncertainty only) -- use for
+  /// visualisations.
+  /// @return The strength as inverse position standard deviation [1/m].
+  virtual double strength() const = 0;
+
+  /// \brief Get a cloned relative pose error, but as a constant one (i.e. not back-convertalble)
+  virtual std::shared_ptr<TwoPoseGraphErrorConst> cloneTwoPoseGraphErrorConst() const = 0;
+
+  protected:
+
+  /// \brief Adding residual blocks will invalidate this.
+  /// Before optimizing, call updateErrorComputation()
+  bool errorComputationValid_;
+
+  /// \brief Helper struct for connected parameter blocks.
+  template<int SIZE>
+  struct ParameterBlockInfo {
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+      Eigen::Matrix<double, SIZE, 1> parameters; ///< Parameters: original values when added.
+
+    /// \brief Default constructor.
+    ParameterBlockInfo() {}
+
+    /// \brief Constructor from parameter block and index.
+    /// parameterBlock The parameter block.
+    /// idx The ordering index.
+    ParameterBlockInfo(const std::shared_ptr<ParameterBlock> & parameterBlock, size_t idx) :
+        parameterBlock(parameterBlock), idx(idx)
+    {
+      std::memcpy(parameters.data(), parameterBlock->parameters(), SIZE*sizeof(double));
+    }
+    std::shared_ptr<ParameterBlock> parameterBlock; ///< The parameter block.
+    size_t idx; ///< The ordering index.
+  };
+
+  /// \todo Redo -- needed for DeltaX computation...
+  ParameterBlockInfo<7> poseParameterBlockInfos_[2]; ///< Parameter block infos (poses).
+  AlignedVector<ParameterBlockInfo<7>> extrinsicsParameterBlockInfos_; ///< Extrinsics infos.
+  AlignedVector<ParameterBlockInfo<4>> landmarkParameterBlockInfos_; ///< Landmark Parameter infos.
+
+  /// \brief Maps parameter block Ids to index
+  std::map<uint64_t, size_t> landmarkParameterBlockId2idx_;  ///< Maps parameter block Ids to index
+  size_t extrinsicsSize_ = 0; ///< Size of extrinsics block.
+  size_t sparseSize_ = 0; ///< Size of sparse part (landmarks).
+
+  StateId referencePoseId_; ///< The reference pose ID.
+  StateId otherPoseId_; ///< The ID of the other pose.
+
+  bool isComputed_ = false; ///< Has the error term been computed?
+
+  size_t numCams_ = 0;  ///< The number of cameras on the rig.
+  bool stayConst_ = true;  ///< If true, the reference and other state extrinsics are the same.
+
+  std::map<uint64_t, std::vector<Observation>> observations_; ///< Stores the added observations.
+  AlignedMap<uint64_t, Eigen::Vector4d> landmarks_; ///< Landmarks in S0 coordinates.
+
+  kinematics::Transformation linearisationPoint_T_S0S1_; ///< Relative poses
+  std::vector<std::shared_ptr<kinematics::Transformation>> linearisationPoints_T_SC_; ///< Extins.
+};
+
+/// \brief Relative error between two poses. \todo also use non-const extrinsics...
+class TwoPoseStandardGraphError : public ::ceres::SizedCostFunction<
+    6 /* number of residuals */,
+    7, /* size of first parameter */
+    7 /* size of second parameter */>, public TwoPoseGraphError {
+ public:
+
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+  OKVIS_DEFINE_EXCEPTION(Exception,std::runtime_error)
+
+  /// \brief The base class type.
+  typedef ::ceres::SizedCostFunction<6, 7, 7> base_t;
+
+  /// \brief Number of residuals (6).
+  static const int kNumResiduals = 6;
+
+  /// \brief Constructor.
+  TwoPoseStandardGraphError() = delete;
+
+  /// \brief Simple constructor with the two pose IDs.
+  /// \param referencePoseId The reference pose ID.
+  /// \param otherPoseId The ID of the other pose.
+  /// \param numCams The number of cameras on the rig.
+  /// \param stayConst If true (default), the reference and other state extrinsics are the same.
+  TwoPoseStandardGraphError(StateId referencePoseId, StateId otherPoseId, size_t numCams,
+                            bool stayConst = true);
+
+  /// @brief Convert this relative pose error back into observations.
+  /// @param[out] observations The observations originally passed.
+  /// @param[out] duplicates Indicates which ones had been added originally as duplications.
+  /// @return True on success.
+  virtual bool convertToReprojectionErrors(
+    std::vector<Observation> &observations,
+    std::vector<KeypointIdentifier> &duplicates) override final;
+
+  /// @brief This computes a relative pose error from the observations.
+  /// @return True on success.
+  virtual bool compute() override final;
 
   // error term and Jacobian implementation (inherited pure virtuals from ::ceres::CostFunction)
   /**
@@ -194,26 +278,19 @@ class TwoPoseGraphError : public ::ceres::SizedCostFunction<
   }
 
   /// \brief Get a cloned relative pose error, but as a constant one (i.e. not back-convertalble)
-  std::shared_ptr<TwoPoseGraphErrorConst> cloneTwoPoseGraphErrorConst() const;
+  virtual std::shared_ptr<TwoPoseGraphErrorConst> cloneTwoPoseGraphErrorConst() const override final;
 
   /// @brief Residual block type as string
   virtual std::string typeInfo() const override final{
-    return "TwoPoseGraphError";
+    return "TwoPoseStandardGraphError";
   }
-
-  /// @brief The covisibilities between the two poses.
-  /// @return The number of co-observed landmarks.
-  //int covisibility(std::map<uint64_t, std::map<uint64_t, size_t>> & coObservationCounts) const;
 
   /// @brief The strength of this link (regarding position uncertainty only) -- use for
   /// visualisations.
   /// @return The strength as inverse position standard deviation [1/m].
-  double strength() const;
+  virtual double strength() const override final ;
 
 protected:
-
-  /// \brief Checks the internal datastructure (debug)
-  void check();
 
   /// @name The internal storage of the linearised system.
   /// @{
@@ -224,60 +301,19 @@ protected:
   /// With information matrix H = J_^T*J_.
   Eigen::Matrix<double,6,1> DeltaX_; ///< nominal deviation from linearisation point
   Eigen::Matrix<double,6,6> J_; ///< the decomposed inf. matrix (of the relative system at lin pt)
-  kinematics::Transformation linearisationPoint_T_S0S1_; ///< Relative poses
-  AlignedMap<uint64_t, kinematics::Transformation> linearisationPoint_T_SCi_; ///< Extrinsics
+};
 
-  /// \brief Adding residual blocks will invalidate this.
-  /// Before optimizing, call updateErrorComputation()
-  bool errorComputationValid_;
-
-  /// \brief Helper struct for connected parameter blocks.
-  template<int SIZE>
-  struct ParameterBlockInfo {
-    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-    Eigen::Matrix<double, SIZE, 1> parameters; ///< Parameters: original values when added.
-
-    /// \brief Default constructor.
-    ParameterBlockInfo() {}
-
-    /// \brief Constructor from parameter block and index.
-    /// parameterBlock The parameter block.
-    /// idx The ordering index.
-    ParameterBlockInfo(const std::shared_ptr<ParameterBlock> & parameterBlock, size_t idx) :
-      parameterBlock(parameterBlock), idx(idx)
-    {
-      std::memcpy(parameters.data(), parameterBlock->parameters(), SIZE*sizeof(double));
-    }
-    std::shared_ptr<ParameterBlock> parameterBlock; ///< The paraeter block.
-    size_t idx; ///< The ordering index.
-  };
-
-  /// \todo Redo -- needed for DeltaX computation...
-  ParameterBlockInfo<7> poseParameterBlockInfos_[2]; ///< Parameter block infos (poses).
-  AlignedVector<ParameterBlockInfo<7>> extrinsicsParameterBlockInfos_; ///< Extrinsics infos.
-  AlignedVector<ParameterBlockInfo<4>> landmarkParameterBlockInfos_; ///< Landmark Parameter infos.
-
-  /// \brief Maps parameter block Ids to index
-  std::vector<std::map<uint64_t, size_t>> extrinsicsParameterBlockId2idx_;
-  std::map<uint64_t, size_t> landmarkParameterBlockId2idx_;  ///< Maps parameter block Ids to index
-  size_t extrinsicsSize_ = 0; ///< Size of extrinsics block.
-  size_t sparseSize_ = 0; ///< Size of sparse part (landmarks).
-
-  StateId referencePoseId_; ///< The reference pose ID.
-  StateId otherPoseId_; ///< The ID of the other pose.
-
-  bool isComputed_ = false; ///< Has the error term been computed?
-
-  std::vector<Observation> observations_; ///< Stores all the added observations.
-  AlignedMap<uint64_t, Eigen::Vector4d> landmarks_; ///< Landmarks in S0 coordinates.
-
+class TwoPoseGraphErrorConst : public ErrorInterface {
+  public:
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+  OKVIS_DEFINE_EXCEPTION(Exception,std::runtime_error)
 };
 
 /// @brief Constant (non-convertible) version of the TwoPoseGraphError (see above).
-class TwoPoseGraphErrorConst : public ::ceres::SizedCostFunction<
+class TwoPoseStandardGraphErrorConst : public ::ceres::SizedCostFunction<
     6 /* number of residuals */,
     7, /* size of first parameter */
-    7 /* size of second parameter */>, public ErrorInterface {
+    7 /* size of second parameter */>, public TwoPoseGraphErrorConst {
  public:
 
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -290,17 +326,15 @@ class TwoPoseGraphErrorConst : public ::ceres::SizedCostFunction<
   static const int kNumResiduals = 6;
 
   /// \brief Default constructor.
-  TwoPoseGraphErrorConst() = delete;
+  TwoPoseStandardGraphErrorConst() = delete;
   /// \brief To construct from TwoPoseGraphError.
-  TwoPoseGraphErrorConst(
+  TwoPoseStandardGraphErrorConst(
       const Eigen::Matrix<double,6,1> & DeltaX, const Eigen::Matrix<double,6,6> & J,
-      const kinematics::Transformation & linearisationPoint_T_S0S1,
-      const AlignedMap<uint64_t, kinematics::Transformation> & linearisationPoint_T_SCi) :
-    DeltaX_(DeltaX), J_(J), linearisationPoint_T_S0S1_(linearisationPoint_T_S0S1),
-    linearisationPoint_T_SCi_(linearisationPoint_T_SCi)
+      const kinematics::Transformation & linearisationPoint_T_S0S1) :
+    DeltaX_(DeltaX), J_(J), linearisationPoint_T_S0S1_(linearisationPoint_T_S0S1)
   {}
   /// \brief Trivial destructor.
-  virtual ~TwoPoseGraphErrorConst() override = default;
+  virtual ~TwoPoseStandardGraphErrorConst() override = default;
   // error term and Jacobian implementation (inherited pure virtuals from ::ceres::CostFunction)
   /**
     * @brief This evaluates the error term and additionally computes the Jacobians.
@@ -343,7 +377,7 @@ class TwoPoseGraphErrorConst : public ::ceres::SizedCostFunction<
 
   /// @brief Residual block type as string
   virtual std::string typeInfo() const override final {
-    return "TwoPoseGraphErrorConst";
+    return "TwoPoseStandardGraphErrorConst";
   }
 
 protected:
@@ -355,7 +389,6 @@ protected:
   Eigen::Matrix<double,6,1> DeltaX_; ///< nominal deviation from linearisation point
   Eigen::Matrix<double,6,6> J_; ///< the decomposed info matrix (of the relative system at lin pt)
   kinematics::Transformation linearisationPoint_T_S0S1_; ///< Relative poses
-  AlignedMap<uint64_t, kinematics::Transformation> linearisationPoint_T_SCi_; ///< Extrinsics
 };
 
 }  // namespace ceres

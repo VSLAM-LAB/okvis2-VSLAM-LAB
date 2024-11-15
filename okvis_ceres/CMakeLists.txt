@@ -32,6 +32,7 @@ add_library(${LIB_NAME}
   include/okvis/ceres/SpeedAndBiasError.hpp
   include/okvis/ceres/SpeedAndBiasParameterBlock.hpp
   include/okvis/ceres/TwoPoseGraphError.hpp
+  include/okvis/ceres/TwoPoseExtrinsicsGraphError.hpp
   include/okvis/ceres/implementation/ReprojectionError.hpp
   include/okvis/ceres/ode/ode.hpp
   include/okvis/ceres/DepthError.hpp
@@ -48,6 +49,7 @@ add_library(${LIB_NAME}
   src/SpeedAndBiasError.cpp
   src/SpeedAndBiasParameterBlock.cpp
   src/TwoPoseGraphError.cpp
+  src/TwoPoseExtrinsicsGraphError.cpp
   src/ViGraph.cpp
   src/ViGraphEstimator.cpp
   src/ViSlamBackend.cpp

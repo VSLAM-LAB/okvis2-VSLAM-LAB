@@ -242,13 +242,13 @@ class ViGraph
       return false;
     }
     State &state = states_.at(StateId(keypointId.frameId));
-    //obs.depthError.errorTerm.reset(new ceres::OneSidedDepthError(0.1, 0.001));
-    //obs.depthError.residualBlockId
-    //  = problem_->AddResidualBlock(obs.depthError.errorTerm.get(),
-    //                               nullptr,
-    //                               state.pose->parameters(),
-    //                               landmarks_.at(obs.landmarkId).hPoint->parameters(),
-    //                               state.extrinsics.at(keypointId.cameraIndex)->parameters());
+    obs.depthError.errorTerm.reset(new ceres::OneSidedDepthError(0.1, 0.001));
+    obs.depthError.residualBlockId
+      = problem_->AddResidualBlock(obs.depthError.errorTerm.get(),
+                                   nullptr,
+                                   state.pose->parameters(),
+                                   landmarks_.at(obs.landmarkId).hPoint->parameters(),
+                                   state.extrinsics.at(keypointId.cameraIndex)->parameters());
 
     // remember everywhere
     landmarks_.at(obs.landmarkId).observations.at(keypointId) = obs;
@@ -314,7 +314,6 @@ class ViGraph
     observation.errorTerm.reset(new ceres::ReprojectionError<GEOMETRY_TYPE>(
                     multiFrame.template geometryAs<GEOMETRY_TYPE>(keypointId.cameraIndex),
                     keypointId.cameraIndex, measurement, information));
-    //observation.depthError.errorTerm.reset(new ceres::OneSidedDepthError(0.1, 0.001));
 
     State& state = states_.at(StateId(keypointId.frameId));
     observation.residualBlockId = problem_->AddResidualBlock(
@@ -322,18 +321,6 @@ class ViGraph
         useCauchy&&cauchyLossFunctionPtr_ ? cauchyLossFunctionPtr_.get() : nullptr,
         state.pose->parameters(), landmarks_.at(landmarkId).hPoint->parameters(),
         state.extrinsics.at(keypointId.cameraIndex)->parameters());
-    //observation.depthError.residualBlockId
-    //  = problem_->AddResidualBlock(observation.depthError.errorTerm.get(),
-    //                               nullptr,
-    //                               state.pose->parameters(),
-    //                               landmarks_.at(landmarkId).hPoint->parameters(),
-    //                               state.extrinsics.at(keypointId.cameraIndex)->parameters());
-
-    // OKVIS_ASSERT_TRUE(Exception,
-    //                   okvis::ceres::jacobiansCorrect(problem_.get(),
-    //                                                  observation.depthError.residualBlockId),
-    //                   "Jacobian verification failed")
-
     observation.landmarkId = landmarkId;
 
     // remember everywhere
@@ -368,7 +355,6 @@ class ViGraph
     // create error term
     Observation observation;
     observation.errorTerm = reprojectionError->clone();
-    //observation.depthError.errorTerm.reset(new ceres::OneSidedDepthError(0.1, 0.001));
 
     State& state = states_.at(StateId(keypointId.frameId));
     observation.residualBlockId = problem_->AddResidualBlock(
@@ -376,12 +362,6 @@ class ViGraph
         useCauchy&&cauchyLossFunctionPtr_ ? cauchyLossFunctionPtr_.get() : nullptr,
         state.pose->parameters(), landmarks_.at(landmarkId).hPoint->parameters(),
         state.extrinsics.at(keypointId.cameraIndex)->parameters());
-    //observation.depthError.residualBlockId
-    //  = problem_->AddResidualBlock(observation.depthError.errorTerm.get(),
-    //                           nullptr,
-    //                           state.pose->parameters(),
-    //                           landmarks_.at(landmarkId).hPoint->parameters(),
-    //                           state.extrinsics.at(keypointId.cameraIndex)->parameters());
     observation.landmarkId = landmarkId;
 
     // remember everywhere

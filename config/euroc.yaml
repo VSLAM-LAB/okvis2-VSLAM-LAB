@@ -33,10 +33,10 @@ camera_parameters:
     sync_cameras: [0, 1] # the cameras that will be synchronised
     image_delay: 0.00 # [s] timestamp_camera_correct = timestamp_camera - image_delay
     online_calibration: # some parameters to set the online
-        do_extrinsics: false # Do we online-calibrate extrinsics?
-        do_extrinsics_final_ba: false # Do we calibrate extrinsics in final BA?
+        do_extrinsics: true # Do we online-calibrate extrinsics?
+        do_extrinsics_final_ba: true # Do we calibrate extrinsics in final BA?
         sigma_r: 0.01 # T_SCi position prior stdev [m]
-        sigma_alpha: 0.05 # T_SCi orientation prior stdev [rad]
+        sigma_alpha: 0.1 # T_SCi orientation prior stdev [rad]
 
 imu_parameters:
     use: true
@@ -87,6 +87,6 @@ estimator_parameters:
 
 # some options for how and what to output
 output_parameters:
-    display_matches: true  # displays debug video and matches. May be slow.
+    display_matches: false  # displays debug video and matches. May be slow.
     display_overhead: false # debug overhead image. Is slow.
 
