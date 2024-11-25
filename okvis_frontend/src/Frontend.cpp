@@ -970,6 +970,29 @@ bool Frontend::dataAssociationAndInitialization(
 
   }
 
+  // remove outliers, as the last matching step may have introduced some:
+  switch (distortionType) {
+  case okvis::cameras::NCameraSystem::RadialTangential: {
+    removeOutliers<cameras::PinholeCamera<cameras::RadialTangentialDistortion>>(
+      estimator, params.nCameraSystem, framesInOut);
+    break;
+  }
+  case okvis::cameras::NCameraSystem::Equidistant: {
+    removeOutliers<cameras::PinholeCamera<cameras::EquidistantDistortion>>(
+      estimator, params.nCameraSystem, framesInOut);
+    break;
+  }
+  case okvis::cameras::NCameraSystem::RadialTangential8: {
+    removeOutliers<okvis::cameras::PinholeCamera<cameras::RadialTangentialDistortion8>>(
+      estimator, params.nCameraSystem, framesInOut);
+    break;
+  }
+  default:
+    OKVIS_THROW(Exception, "Unsupported distortion type.")
+    break;
+  }
+
+
 #ifdef OKVIS_USE_NN
   if(params.frontend.use_cnn) {
     // remove matches into dynamic areas
@@ -1509,13 +1532,6 @@ int Frontend::matchToMap(Estimator &estimator, const okvis::ViParameters& params
   if(loopClosureLandmarksToUseExclusively) {
     estimator.mergeLandmarks(oldIds, newIds);
   }
-
-  /*/ remove outliers
-  static const bool removeOutliers = true;
-  if (isInitialized_) {
-    runRansac3d2d(estimator, params.nCameraSystem, estimator.multiFrame(StateId(currentFrameId)),
-                  removeOutliers);
-  }*/
 
   //OKVIS_ASSERT_TRUE(Exception, estimator.areLandmarksInFrontOfCameras(), "after match to map")
 
