@@ -588,7 +588,7 @@ int Frontend::getFilteredDBoWResult(const std::unique_ptr<DBoW> &dBow,
     // check maximum
     bool isMax = true;
     for (int a = std::max(0, int(id) - nonmaxRadius);
-         a <= (std::min(int(numKeyframes), int(id) + nonmaxRadius));
+         a <= (std::min(int(numKeyframes-1), int(id) + nonmaxRadius));
          ++a) {
       if (dBoWResult[a].Score > score) {
         isMax = false;
@@ -600,7 +600,7 @@ int Frontend::getFilteredDBoWResult(const std::unique_ptr<DBoW> &dBow,
 
     // suppress
     for (int a = std::max(0, int(id) - nonmaxRadius);
-         a <= (std::min(int(numKeyframes), int(id) + nonmaxRadius));
+         a <= (std::min(int(numKeyframes-1), int(id) + nonmaxRadius));
          ++a) {
       suppressedIds.insert(a);
     }
