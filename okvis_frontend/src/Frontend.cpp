@@ -1327,6 +1327,10 @@ int Frontend::matchToMap(Estimator &estimator, const okvis::ViParameters& params
           if(cosA > cos(10.0/focalLength)) {
             landmarkToMatch.is3d = true;
           }
+          //std::cout << quality << std::endl;
+          //if (quality > 1.0e-6) {
+          //  landmarkToMatch.is3d = true;
+          //}
         }
 
         // over 35 degree viewpoint change
@@ -1434,9 +1438,9 @@ int Frontend::matchToMap(Estimator &estimator, const okvis::ViParameters& params
           newIds.push_back(lmIds[k]);
         }
 
-        if(hps_W[k].norm()>1.0e-22 && !estimator.isLandmarkInitialised(lmIds[k])) { //ugly
-          estimator.setLandmark(lmIds[k], hps_W[k], true);
-        }
+        //if(hps_W[k].norm()>1.0e-22 && !estimator.isLandmarkInitialised(lmIds[k])) { //ugly
+        //  estimator.setLandmark(lmIds[k], hps_W[k], true);
+        //}
 
         multiFrame->setLandmarkId(im, k, lmIds[k].value());
         estimator.addObservation<CAMERA_GEOMETRY>(
@@ -1450,14 +1454,16 @@ int Frontend::matchToMap(Estimator &estimator, const okvis::ViParameters& params
   // remove outliers -- initialise pose only without IMU
   const bool ransacRemoveOutliers = true;
   MultiFramePtr multiFrame = estimator.multiFrame(StateId(currentFrameId));
-  runRansac3d2d(estimator, multiFrame->cameraSystem(), multiFrame, !params.imu.use,
-                ransacRemoveOutliers);
-  T_WS1 = estimator.pose(StateId(currentFrameId));
+  if(!params.imu.use) {
+    runRansac3d2d(estimator, multiFrame->cameraSystem(), multiFrame, !params.imu.use,
+                  ransacRemoveOutliers);
+    T_WS1 = estimator.pose(StateId(currentFrameId));
+  }
   //OKVIS_ASSERT_TRUE(Exception, estimator.areLandmarksInFrontOfCameras(), "after ransac")
 
   // do optimisation
-  if(!loopClosureLandmarksToUseExclusively && ctr > 2) {
-    std::vector<StateId> updatedStatesRealtime;
+  std::vector<StateId> updatedStatesRealtime;
+  if(!loopClosureLandmarksToUseExclusively && ctr > 3) {
     estimator.optimiseRealtimeGraph(
         2, updatedStatesRealtime, params.estimator.realtime_num_threads,
         false, true, isInitialized_);
@@ -1524,13 +1530,58 @@ int Frontend::matchToMap(Estimator &estimator, const okvis::ViParameters& params
           newIds.push_back(lmIds[k]);
         }
 
-        if(hps_W[k].norm()>1.0e-22 && !estimator.isLandmarkInitialised(lmIds[k])) { //ugly
-          estimator.setLandmark(lmIds[k], hps_W[k], true);
+        // check bad reprojections into existing frames
+        MapPoint2 mpt;
+        estimator.getLandmark(lmIds[k], mpt);
+        if (hps_W[k].norm() > 1.0e-22) {
+          bool badReprojections = false;
+          for (const auto &obs : mpt.observations) {
+            Eigen::Vector2d ptp;
+            Eigen::Vector2d pt;
+            const auto &mf = estimator.multiFrame(StateId(obs.frameId));
+            mf->getKeypoint(obs.cameraIndex, obs.keypointIndex, pt);
+            const auto &cam = mf->geometryAs<CAMERA_GEOMETRY>(obs.cameraIndex);
+            const kinematics::Transformation T_WS = estimator.pose(StateId(obs.frameId));
+            const kinematics::Transformation T_SC = estimator.extrinsics(StateId(obs.frameId),
+                                                                         obs.cameraIndex);
+            //Eigen::Vector4d hpW = mpt.point;
+            Eigen::Vector4d hpC = T_SC.inverse() * T_WS.inverse() * hps_W[k];
+            auto s = cam->projectHomogeneous(hpC, &ptp);
+            if (!(s == cameras::ProjectionStatus::Successful && (pt - ptp).norm() < 4.0)) {
+              badReprojections = true;
+              break;
+            }
+          }
+          if (badReprojections) {
+            continue;
+          }
         }
 
+        Eigen::Vector2d pt1;
+        Eigen::Vector2d pt1p;
+        multiFrame->getKeypoint(im, k, pt1);
+        const auto &cam1 = multiFrame->geometryAs<CAMERA_GEOMETRY>(im);
+        if (hps_W[k].norm() > 1.0e-22 && !estimator.isLandmarkInitialised(lmIds[k])) { //ugly
+          // check current reprojection
+          auto s1 = cam1->projectHomogeneous(T_WC1.inverse() * hps_W[k], &pt1p);
+          if (!(s1 == cameras::ProjectionStatus::Successful && (pt1 - pt1p).norm() < 4.0)) {
+            continue;
+          }
+
+          // accept and set position
+          estimator.setLandmark(lmIds[k], hps_W[k], true);
+        } else {
+          auto s1 = cam1->projectHomogeneous(T_WC1.inverse() * Eigen::Vector4d(mpt.point), &pt1p);
+          if (!(s1 == cameras::ProjectionStatus::Successful && (pt1 - pt1p).norm() < 4.0)) {
+            continue;
+          }
+        }
+
+        // accept and set observation
         multiFrame->setLandmarkId(im, k, lmIds[k].value());
         estimator.addObservation<CAMERA_GEOMETRY>(
             lmIds[k], StateId(currentFrameId), im, k);
+
         ctr++;
       }
     }
@@ -1541,6 +1592,11 @@ int Frontend::matchToMap(Estimator &estimator, const okvis::ViParameters& params
   if(loopClosureLandmarksToUseExclusively) {
     estimator.mergeLandmarks(oldIds, newIds);
   }
+
+  // final two steps optimisation
+  //estimator.optimiseRealtimeGraph(
+  //  2, updatedStatesRealtime, params.estimator.realtime_num_threads,
+  //  false, true, isInitialized_);
 
   //OKVIS_ASSERT_TRUE(Exception, estimator.areLandmarksInFrontOfCameras(), "after match to map")
 

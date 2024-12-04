@@ -883,7 +883,7 @@ void ViGraph::updateLandmarks()
       Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> es;
       es.compute(H);
       const double s0 = sqrt(std::max(1.0e-12, es.eigenvalues()[0]));
-      quality = (minD - 6.0 / s0) / fabs(std::max(1.0e-12, minD));
+      quality = (minD - 3.0 / s0) / fabs(std::max(1.0e-12, minD));
       if (behind) {
         quality = 0.0;
       }
