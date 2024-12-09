@@ -1045,10 +1045,10 @@ void ThreadedSlam::doFinalBa()
   const bool do_extrinsics_final_ba =
       parameters_.camera.online_calibration.do_extrinsics_final_ba;
   const double sigma_r = do_extrinsics_final_ba ?
-                         parameters_.camera.online_calibration.sigma_r :
+                         parameters_.camera.online_calibration.sigma_r_final_ba :
                          0.0;
   const double sigma_alpha = do_extrinsics_final_ba ?
-                             parameters_.camera.online_calibration.sigma_alpha :
+                             parameters_.camera.online_calibration.sigma_alpha_final_ba :
                              0.0;
   std::set<StateId> updatedStatesBa;
   estimator_.doFinalBa(100, posegraphOptimisationSummary_, updatedStatesBa,

@@ -89,6 +89,8 @@ struct CameraParameters{
     bool do_extrinsics_final_ba; ///< Do we calibrate extrinsics in final BA?
     double sigma_r; ///< T_SCi position prior stdev [m]
     double sigma_alpha; ///< T_SCi orientation prior stdev [rad]
+    double sigma_r_final_ba; ///< T_SCi position prior stdev in final BA [m]
+    double sigma_alpha_final_ba; ///< T_SCi orientation prior stdev in final BA [rad]
   };
 
   OnlineCalibrationParameters online_calibration; ///< Online calibration parameters.

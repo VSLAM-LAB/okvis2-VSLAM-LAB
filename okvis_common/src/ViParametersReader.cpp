@@ -195,6 +195,10 @@ void ViParametersReader::readConfigFile(const std::string& filename) {
              viParameters_.camera.online_calibration.sigma_r);
   parseEntry(file["camera_parameters"]["online_calibration"], "sigma_alpha",
              viParameters_.camera.online_calibration.sigma_alpha);
+  parseEntry(file["camera_parameters"]["online_calibration"], "sigma_r_final_ba",
+             viParameters_.camera.online_calibration.sigma_r_final_ba);
+  parseEntry(file["camera_parameters"]["online_calibration"], "sigma_alpha_final_ba",
+             viParameters_.camera.online_calibration.sigma_alpha_final_ba);
 
   //IMU parameters.
   parseEntry(file["imu_parameters"], "use",
