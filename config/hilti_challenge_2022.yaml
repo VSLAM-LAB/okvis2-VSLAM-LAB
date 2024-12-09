@@ -79,7 +79,9 @@ camera_parameters:
         do_extrinsics: false # Do we online-calibrate extrinsics?
         do_extrinsics_final_ba: false # Do we calibrate extrinsics in final BA?
         sigma_r: 0.01 # T_SCi position prior stdev [m]
-        sigma_alpha: 0.05 # T_SCi orientation prior stdev [rad]
+        sigma_alpha: 0.1 # T_SCi orientation prior stdev [rad]
+        sigma_r_final_ba: 0.01 # T_SCi position prior stdev in final BA [m]
+        sigma_alpha_final_ba: 0.5 # T_SCi orientation prior stdev in final BA [rad]
 
 imu_parameters:
     use: true

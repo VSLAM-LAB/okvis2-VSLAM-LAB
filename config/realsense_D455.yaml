@@ -51,8 +51,10 @@ camera_parameters:
     online_calibration: # some parameters to set the online 
         do_extrinsics: false # Do we online-calibrate extrinsics?
         do_extrinsics_final_ba: true
-        sigma_r: 0.001 # T_SCi position prior stdev [m] 
-        sigma_alpha: 0.01 # T_SCi orientation prior stdev [rad]
+        sigma_r: 0.01 # T_SCi position prior stdev [m]
+        sigma_alpha: 0.1 # T_SCi orientation prior stdev [rad]
+        sigma_r_final_ba: 0.03 # T_SCi position prior stdev in final BA [m]
+        sigma_alpha_final_ba: 0.3 # T_SCi orientation prior stdev in final BA [rad]
 
 # the IMU sensor model
 imu_parameters:
