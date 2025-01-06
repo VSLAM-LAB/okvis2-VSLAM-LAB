@@ -38,6 +38,7 @@
  */
 
 #include "okvis/assert_macros.hpp"
+#include <opencv2/imgcodecs.hpp>
 #include <pthread.h>
 #include <sched.h>
 #include <sys/resource.h>
@@ -125,7 +126,7 @@ class Frontend::DBoW {
   {
   }
 
-  DBoW2::TemplatedVocabulary<DBoW2::FBrisk::TDescriptor, DBoW2::FBrisk> vocabulary; ///< BRISK Vocabulary.
+  DBoW2::TemplatedVocabulary<DBoW2::FBrisk::TDescriptor, DBoW2::FBrisk> vocabulary; ///< BRISK Voc.
   DBoW2::TemplatedDatabase<DBoW2::FBrisk::TDescriptor, DBoW2::FBrisk> database; ///< BRISK Database.
   std::vector<uint64> poseIds; ///< The multiframe IDs corresponding to the dBow ones.
 
@@ -349,8 +350,9 @@ bool Frontend::verifyRecognisedPlace(const Estimator &estimator,
       // now get best match
       if (distMin < briskMatchingThreshold_) {
         ctr++;
+        const KeypointIdentifier kid(framesInOut->id(), im, kMin);
         points[iter->first.value()] = iter->second;
-        matches[KeypointIdentifier(framesInOut->id(), im, kMin)] = iter->first.value();
+        matches[kid] = iter->first.value();
       }
     }
   }
@@ -386,6 +388,7 @@ bool Frontend::verifyRecognisedPlace(const Estimator &estimator,
   const int numInliers = int(ransac.inliers_.size());
   const double inlierRatio = double(ransac.inliers_.size())
                              / double(adapter.getNumberCorrespondences());
+
   ransacLoopClosureTimer.stop();
   if (numInliers < minInliers || inlierRatio < 0.7) {
     return false;
@@ -396,6 +399,141 @@ bool Frontend::verifyRecognisedPlace(const Estimator &estimator,
   for (size_t i = 0; i < ransac.inliers_.size(); ++i) {
     inliers.at(size_t(ransac.inliers_.at(i))) = true;
   }
+
+  /*/// DEBUG drawing
+  for (size_t im = 0; im < numCameras_; ++im) {
+    cv::Mat currentImg = framesInOut->image(im).clone();
+    cv::cvtColor(currentImg, currentImg, cv::COLOR_GRAY2BGR);
+    cv::Mat oldImg = oldFrame->image(im);
+    cv::cvtColor(oldImg, oldImg, cv::COLOR_GRAY2BGR);
+    int ctr = 0;
+    std::set<uint64_t> allMatches;
+    std::set<uint64_t> allRemovedMatches;
+    for (const auto &match : matches) {
+      if (match.first.cameraIndex == im) {
+        const cv::Scalar color = inliers[ctr] ? cv::Scalar(0, 255, 0) : cv::Scalar(0, 0, 255);
+        cv::KeyPoint p;
+        framesInOut->getCvKeypoint(im, match.first.keypointIndex, p);
+        cv::circle(currentImg, p.pt, 3, color, 1, cv::LINE_AA);
+        if (inliers[ctr]) {
+          allMatches.insert(match.second);
+          std::stringstream id;
+          id << match.second;
+          cv::putText(currentImg,
+                      id.str(),
+                      p.pt + cv::Point2f(-10, -6),
+                      cv::FONT_HERSHEY_COMPLEX,
+                      0.4,
+                      color,
+                      1,
+                      cv::LINE_AA);
+        } else {
+          allRemovedMatches.insert(match.second);
+        }
+      }
+      ctr++;
+    }
+    for (size_t k = 0; k < oldFrame->numKeypoints(im); ++k) {
+      uint64_t lmId = oldFrame->landmarkId(im, k);
+      cv::KeyPoint p;
+      oldFrame->getCvKeypoint(im, k, p);
+      cv::Scalar color = cv::Scalar(0, 255, 0);
+      if (allMatches.count(lmId)) {
+        cv::circle(oldImg, p.pt, 3, color, 1, cv::LINE_AA);
+        cv::putText(oldImg,
+                    std::to_string(lmId),
+                    p.pt + cv::Point2f(-10, -6),
+                    cv::FONT_HERSHEY_COMPLEX,
+                    0.4,
+                    color,
+                    1,
+                    cv::LINE_AA);
+      } else {
+        color = allRemovedMatches.count(lmId) ? cv::Scalar(0, 0, 255) : cv::Scalar(255, 0, 0);
+        cv::circle(oldImg, p.pt, 3, color, 1, cv::LINE_AA);
+      }
+    }
+
+    std::stringstream currentName, oldName;
+    currentName << framesInOut->id() << "-" << oldFrame->id() << "_" << im << "_current" << ".jpg";
+    oldName << framesInOut->id() << "-" << oldFrame->id() << "_" << im << "_old" << ".jpg";
+    cv::imwrite(currentName.str(), currentImg);
+    cv::imwrite(oldName.str(), oldImg);
+  }
+  ///*/
+
+  // check distinciveness of survived matches
+  float sum = 0.0;
+  for (size_t im = 0; im < numCameras_; ++im) {
+    Eigen::Matrix<float, Eigen::Dynamic, 48 * 8> descriptorMatrix(ransac.inliers_.size(), 48 * 8);
+    int inlierCtr = 0;
+    int ctr2 = 0;
+    for (const auto &match : matches) {
+      if (match.first.cameraIndex != im) {
+        ctr2++;
+        continue;
+      }
+      const uchar *desc = framesInOut->keypointDescriptor(match.first.cameraIndex,
+                                                          match.first.keypointIndex);
+      if (inliers[ctr2]) {
+        for (size_t b = 0; b < 48; b++) {
+          for (size_t c = 0; c < 8; c++) {
+            if (desc[b] & (1 << c)) {
+              descriptorMatrix(inlierCtr, b * 8 + c) = 1.0;
+            } else {
+              descriptorMatrix(inlierCtr, b * 8 + c) = 0.0;
+            }
+          }
+        }
+        inlierCtr++;
+      }
+      ctr2++;
+    }
+    if (inlierCtr > 0) {
+      descriptorMatrix.conservativeResize(inlierCtr, 48 * 8);
+      Eigen::Matrix<float, 1, 48 * 8> stdev
+        = ((descriptorMatrix.rowwise() - descriptorMatrix.colwise().mean()).colwise().squaredNorm()
+           / (descriptorMatrix.rows() - 1))
+            .cwiseSqrt();
+      sum += float(inlierCtr) * stdev.sum();
+      //LOG(WARNING) << stdev.sum();
+    }
+  }
+  //LOG(INFO) << framesInOut->id() << "->" << oldFrame->id()
+  //          << " : descriptor stdev " << stdev.sum();
+  const float avg = sum / float(ransac.inliers_.size());
+  if (avg < 182.0 && ransac.inliers_.size() < 20) {
+    LOG(INFO) << framesInOut->id() << "->" << oldFrame->id() << " : "
+              << "Rejecting loop closure due to indistincive descriptors (" << avg << ")";
+    return false;
+  }
+
+  /*/ check distinciveness of survived matches
+  std::vector<std::vector<uchar>> features;
+  ctr2 = 0;
+  for (const auto &match : matches) {
+    if (inliers[ctr2]) {
+      features.push_back(std::vector<uchar>(48));
+      memcpy(features.back().data(),
+             framesInOut->keypointDescriptor(match.first.cameraIndex, match.first.keypointIndex),
+             48 * sizeof(uchar));
+    }
+    ctr2++;
+  }
+  DBoW2::QueryResults dBoWResult;
+  dBow_->database.query(features, dBoWResult, -1); // get all matches
+  for (const auto &result : dBoWResult) {
+    if (result.Id < dBow_->poseIds.size()) {
+      if (dBow_->poseIds[result.Id] == oldFrame->id()) {
+        LOG(WARNING) << "DBoW with score " << result.Score;
+        if (result.Score < 0.1) {
+          LOG(INFO) << "Reject loop closure after re-checking DBoW with score " << result.Score;
+          return false;
+        }
+        break;
+      }
+    }
+  }*/
 
   // refine
   TimerSwitchable loopClosureRefinementTimer("2.06 loop closure pose refinement");
@@ -529,6 +667,7 @@ bool Frontend::verifyRecognisedPlace(const Estimator &estimator,
 
   // get uncertainty: lhs to be filled on the fly
   H = Eigen::Matrix<double, 6, 6>::Zero();
+  int additionalOutliers = 0;
   for (size_t e = 0; e < reprojectionErrors.size(); ++e) {
     // fill lhs Hessian
     const double *pars[3];
@@ -547,8 +686,19 @@ bool Frontend::verifyRecognisedPlace(const Estimator &estimator,
     jacobiansMinimal[1] = nullptr;
     jacobians[2] = nullptr;
     jacobiansMinimal[2] = nullptr;
-    reprojectionError->EvaluateWithMinimalJacobians(pars, err.data(), jacobians, jacobiansMinimal);
-    H += jacobianMinimal.transpose() * jacobianMinimal;
+    reprojectionError->EvaluateWithMinimalJacobians(pars, err.data(), jacobians, jacobiansMinimal);  
+    if (err.norm() > 3.0) {
+      additionalOutliers++;
+    } else {
+      H += jacobianMinimal.transpose() * jacobianMinimal;
+    }
+  }
+
+  const int numFinalInliers = int(ransac.inliers_.size())-additionalOutliers;
+  const double finalInlierRatio = double(numFinalInliers)
+                             / double(adapter.getNumberCorrespondences());
+  if (numFinalInliers < minInliers || finalInlierRatio < 0.7) {
+    return false;
   }
 
   loopClosureRefinementTimer.stop();
@@ -833,7 +983,7 @@ bool Frontend::dataAssociationAndInitialization(
         // verify with RANSAC and refine
         kinematics::Transformation T_Sold_Snew;
         Eigen::Matrix<double, 6, 6> H;
-        if (!verifyRecognisedPlace(estimator, params, framesInOut, oldFrame, T_Sold_Snew, H)) {
+        if (!verifyRecognisedPlace(estimator, params, framesInOut, oldFrame, T_Sold_Snew, H, 10)) {
           attempts++;
           continue;
         }
@@ -848,7 +998,6 @@ bool Frontend::dataAssociationAndInitialization(
               StateId(oldFrame->id()), StateId(frameId), T_Sold_Snew, H,
               skipFullGraphOptimisation);
         if(!loopClosureAttemptSuccessful) {
-          LOG(INFO) << "unsuccessful loop closure frame "<< id.first.value();
           attemptLoopClosureTimer.stop();
           continue;
         }

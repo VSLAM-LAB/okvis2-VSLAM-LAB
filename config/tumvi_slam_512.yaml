@@ -69,7 +69,7 @@ frontend_parameters:
     octaves: 0 # number of octaves for detection. 0 means single-scale at highest resolution
     max_num_keypoints: 800 # restrict to a maximum of this many keypoints per image (strongest ones)
     keyframe_overlap: 0.65 # minimum field-of-view overlap
-    use_cnn: true # use the CNN (if available) to filter out dynamic content / sky
+    use_cnn: false # use the CNN (if available) to filter out dynamic content / sky
     parallelise_detection: true # Run parallel detect & describe.
     num_matching_threads: 1 # Parallelise matching with this number of threads.
 

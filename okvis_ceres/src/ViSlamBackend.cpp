@@ -703,9 +703,9 @@ bool ViSlamBackend::applyStrategy(size_t numKeyframes,
   }
 
   // prune superfluous keyframes for future place recognition
-  TimerSwitchable t7("7.7 prune place recognition frames");
-  prunePlaceRecognitionFrames();
-  t7.stop();
+  //TimerSwitchable t7("7.7 prune place recognition frames");
+  //prunePlaceRecognitionFrames();
+  //t7.stop();
 
   return true;
 }
@@ -2174,7 +2174,8 @@ bool ViSlamBackend::attemptLoopClosure(StateId pose_i, StateId pose_j,
         || relOrientationError > relOrientationErrorBudget
         || numSteps < 1) {
 
-      LOG(INFO) << "Skip loop closure (heuristic consistency).";
+      LOG(INFO) << pose_j.value() << "->" << pose_i.value() << " : "
+                << "Skip loop closure (heuristic consistency).";
       LOG(INFO) << "Rel. pos. err. " << relPositionError << " vs budget "
           << relPositionErrorBudget << " m/m, rel. or. err. "
           << relOrientationError << " vs budget "
@@ -2190,8 +2191,9 @@ bool ViSlamBackend::attemptLoopClosure(StateId pose_i, StateId pose_j,
     Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(P.topLeftCorner<3, 3>());
     Eigen::Vector3d eigenvalues = saes.eigenvalues();
     double sigma = sqrt(eigenvalues[0] + eigenvalues[1] + eigenvalues[2]);
-    if (sigma > 0.1 && 3.0*sigma > relPositionErrorBudget*distanceTravelled2) {
-      LOG(INFO) << "Skip loop closure (reloc. 3-sigma = " << 3.0*sigma << " m vs budget "
+    if (sigma > 0.1 && 3.0 * sigma > relPositionErrorBudget * distanceTravelled2) {
+      LOG(INFO) << pose_j.value() << "->" << pose_i.value() << " : "
+                << "Skip loop closure (reloc. 3-sigma = " << 3.0*sigma << " m vs budget "
                    << relPositionErrorBudget*distanceTravelled2 << ") ";
       return false;
     }
