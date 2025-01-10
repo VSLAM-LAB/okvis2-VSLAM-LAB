@@ -402,11 +402,11 @@ bool ThreadedSlam::processFrame() {
       speedAndBias.segment<3>(3) = lastOptimisedState_.b_g;
       speedAndBias.tail<3>() = lastOptimisedState_.b_a;
       ceres::ImuError::propagation(imuMeasurementDeque_,
-                                   parameters_.imu,
-                                   T_WS,
-                                   speedAndBias,
-                                   lastOptimisedState_.timestamp,
-                                   multiFrame->timestamp());
+                                           parameters_.imu,
+                                           T_WS,
+                                           speedAndBias,
+                                           lastOptimisedState_.timestamp,
+                                           multiFrame->timestamp());
     } else {
       T_WS = lastOptimisedState_.T_WS;
       if (preLastOptimisedState_.id.isInitialised()) {

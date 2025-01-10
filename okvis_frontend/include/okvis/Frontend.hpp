@@ -396,9 +396,9 @@ private:
    * @param currentFrame    Frame with the new potential matches.
    * @param initializePose  Initialize the pose from RANSAC?
    * @param removeOutliers  Remove observation of outliers in estimator.
-   * @return Number of inliers.
+   * @return True on success.
    */
-  int runRansac3d2d(Estimator &estimator,
+  bool runRansac3d2d(Estimator &estimator,
                     const okvis::cameras::NCameraSystem &nCameraSystem,
                     std::shared_ptr<okvis::MultiFrame> currentFrame,
                     bool initializePose,
@@ -498,7 +498,8 @@ private:
       size_t numKeypoints,
       const MapPoints& pointMap, size_t im, const MultiFramePtr&  multiFrame,
       std::vector<double>& distances, std::vector<LandmarkId>& lmIds,
-      AlignedVector<Eigen::Vector4d>& hps_W, std::vector<size_t>& ctrs) const;
+      AlignedVector<Eigen::Vector4d>& hps_W, std::vector<size_t>& ctrs,
+      std::vector<double>& reprErrs) const;
 
   /**
    * @brief Parallelisable sub-part of matchToMap -- unitialised points.

@@ -823,6 +823,7 @@ bool Frontend::dataAssociationAndInitialization(
     matchMapTimer.stop();
 
     // check tracking quality
+    //LOG(WARNING) << "tracking quality id " << framesInOut->id();
     trackingQuality = estimator.trackingQuality(StateId(framesInOut->id()));
     if (trackingQuality < 0.01) {
       if(estimator.numFrames() == 2 && params.nCameraSystem.numCameras()==1) {
@@ -1362,8 +1363,6 @@ int Frontend::matchToMap(Estimator &estimator, const okvis::ViParameters& params
     return 0;
   }
 
-  const double reprThreshold = params.imu.use ? 20.0 : 150.0;
-
   // get all landmarks
   MapPoints pointMap;
   estimator.getLandmarks(pointMap);
@@ -1379,9 +1378,19 @@ int Frontend::matchToMap(Estimator &estimator, const okvis::ViParameters& params
   int ctr = 0;
   std::vector<cv::Mat> descriptorPool(params.nCameraSystem.numCameras());
   kinematics::Transformation T_WS1 = estimator.pose(StateId(currentFrameId));
+  double reprErr = 0.0;
   for (size_t im = 0; im < params.nCameraSystem.numCameras(); ++im) {
+
     // the current frame to match
     const MultiFramePtr multiFrame = estimator.multiFrame(StateId(currentFrameId));
+
+    const double f = 0.5*(multiFrame->geometryAs<CAMERA_GEOMETRY>(im)->focalLengthU()
+                            + multiFrame->geometryAs<CAMERA_GEOMETRY>(im)->focalLengthV());
+    const double reprThreshold = params.imu.use ? 3.0+f*0.06 : 3.0+f*0.34;
+
+    //cv::Mat dbg = multiFrame->image(im).clone();
+    //cv::cvtColor(dbg, dbg, cv::COLOR_GRAY2BGR);
+
     const size_t numKeypoints = multiFrame->numKeypoints(im);
     if(numKeypoints == 0) {
       continue; // no points -- bad!
@@ -1442,6 +1451,8 @@ int Frontend::matchToMap(Estimator &estimator, const okvis::ViParameters& params
         continue;
 
       landmarkToMatch.projection = kp;
+
+      //cv::circle(dbg, cv::Point2f(kp[0], kp[1]), 3, cv::Scalar(255,0,0), 1, cv::LINE_AA );
 
       // distinguish whether to consider as 3D point or not.
       const double quality = it->second.quality;
@@ -1550,6 +1561,8 @@ int Frontend::matchToMap(Estimator &estimator, const okvis::ViParameters& params
     }
     landmarksToMatchVec[im] = landmarksToMatch;
 
+    //LOG(WARNING) << "landmarksToMatch.size()" << landmarksToMatch.size();
+
     // multithreaded matching
     const size_t num_matching_threads = size_t(params.frontend.num_matching_threads);
 
@@ -1557,6 +1570,7 @@ int Frontend::matchToMap(Estimator &estimator, const okvis::ViParameters& params
     std::vector<LandmarkId> lmIds(numKeypoints);
     AlignedVector<Eigen::Vector4d> hps_W(numKeypoints, Eigen::Vector4d::Zero());
     std::vector<size_t> ctrs(num_matching_threads);
+    std::vector<double> reprErrors(num_matching_threads);
 
     std::vector<std::thread*> threads(num_matching_threads, nullptr);
     for(size_t t = 0; t<num_matching_threads; ++t) {
@@ -1566,13 +1580,14 @@ int Frontend::matchToMap(Estimator &estimator, const okvis::ViParameters& params
               loopClosureLandmarksToUseExclusively, std::cref(T_WS1),
               std::cref(landmarksToMatch), numKeypoints,
               std::cref(pointMap), im, std::cref(multiFrame), std::ref(distances),
-              std::ref(lmIds), std::ref(hps_W), std::ref(ctrs));
+              std::ref(lmIds), std::ref(hps_W), std::ref(ctrs), std::ref(reprErrors));
     }
 
     for(size_t t = 0; t<num_matching_threads; ++t) {
       threads[t]->join();
       delete threads[t];
-      ctr += ctrs[t];
+      reprErr += reprErrors[t];
+      //ctr += ctrs[t];
     }
 
     // now insert observations
@@ -1597,16 +1612,37 @@ int Frontend::matchToMap(Estimator &estimator, const okvis::ViParameters& params
         ctr++;
       }
     }
+
+    //cv::imshow("dbg" + std::to_string(im), dbg);
+    //cv::imwrite("dbg" + std::to_string(im)+".jpg", dbg);
   }
   //OKVIS_ASSERT_TRUE(Exception, estimator.areLandmarksInFrontOfCameras(), "before ransac")
+  reprErr /= double(params.frontend.num_matching_threads * params.nCameraSystem.numCameras());
 
-  // remove outliers -- initialise pose only without IMU
-  const bool ransacRemoveOutliers = true;
+  // remove outliers -- initialise pose only without IMU or when matching with large repr. err.
   MultiFramePtr multiFrame = estimator.multiFrame(StateId(currentFrameId));
-  if(!params.imu.use) {
-    runRansac3d2d(estimator, multiFrame->cameraSystem(), multiFrame, !params.imu.use,
-                  ransacRemoveOutliers);
+  int numInitIter = 2;
+  const bool ransacRemoveOutliers = true;
+  bool runRansac = !params.imu.use;
+  const double f = 0.5*(multiFrame->geometryAs<CAMERA_GEOMETRY>(0)->focalLengthU()
+                        + multiFrame->geometryAs<CAMERA_GEOMETRY>(0)->focalLengthV());
+  const double strictReprThreshold = 3.0 + f*0.006;
+  if (reprErr > strictReprThreshold) {
+    if (params.imu.use) {
+      LOG(INFO) << "large reprojection error (" << reprErr << "): run RANSAC";
+      runRansac = true;
+    }
+    numInitIter += 2;
+  }
+  bool secondRansac = false;
+  if(runRansac) {
+    const bool ransacSuccess = runRansac3d2d(estimator, multiFrame->cameraSystem(), multiFrame,
+                                             runRansac, ransacRemoveOutliers);
     T_WS1 = estimator.pose(StateId(currentFrameId));
+    if (!ransacSuccess) {
+      numInitIter += 4;
+      secondRansac = true;
+    }
   }
   //OKVIS_ASSERT_TRUE(Exception, estimator.areLandmarksInFrontOfCameras(), "after ransac")
 
@@ -1614,16 +1650,20 @@ int Frontend::matchToMap(Estimator &estimator, const okvis::ViParameters& params
   std::vector<StateId> updatedStatesRealtime;
   if(!loopClosureLandmarksToUseExclusively && ctr > 3) {
     estimator.optimiseRealtimeGraph(
-        2, updatedStatesRealtime, params.estimator.realtime_num_threads,
+        numInitIter, updatedStatesRealtime, params.estimator.realtime_num_threads,
         false, true, isInitialized_);
-    removeOutliers<CAMERA_GEOMETRY>(estimator,
+    /*int numInliers = */removeOutliers<CAMERA_GEOMETRY>(estimator,
                                     params.nCameraSystem,
                                     estimator.multiFrame(StateId(currentFrameId)));
+    //LOG(INFO) << "numInliers = " << numInliers;
     estimator.optimiseRealtimeGraph(
       2, updatedStatesRealtime, params.estimator.realtime_num_threads,
       false, true, isInitialized_);
     T_WS1 = estimator.pose(StateId(currentFrameId));
     //LOG(INFO) << "refine \n" <<T_WS1.T();
+  }
+  if (ctr <= 3 && isInitialized_) {
+    secondRansac = true;
   }
 
   // now the non-initialised ones
@@ -1664,7 +1704,7 @@ int Frontend::matchToMap(Estimator &estimator, const okvis::ViParameters& params
     for(size_t t = 0; t<num_matching_threads; ++t) {
       threads[t]->join();
       delete threads[t];
-      ctr += ctrs[t];
+      //ctr += ctrs[t];
     }
 
     // now insert observations
@@ -1743,10 +1783,18 @@ int Frontend::matchToMap(Estimator &estimator, const okvis::ViParameters& params
   }
 
   // final two steps optimisation
-  //estimator.optimiseRealtimeGraph(
-  //  2, updatedStatesRealtime, params.estimator.realtime_num_threads,
-  //  false, true, isInitialized_);
-
+  if (secondRansac) {
+    LOG(INFO) << "Running RANSAC also with uninitialised landmarks";
+    const bool ransacSuccess = runRansac3d2d(estimator, multiFrame->cameraSystem(), multiFrame,
+                                             secondRansac, ransacRemoveOutliers);
+    T_WS1 = estimator.pose(StateId(currentFrameId));
+    if (!ransacSuccess) {
+      numInitIter += 4;
+    }
+    estimator.optimiseRealtimeGraph(
+    numInitIter, updatedStatesRealtime, params.estimator.realtime_num_threads,
+        false, true, isInitialized_);
+  }
   //OKVIS_ASSERT_TRUE(Exception, estimator.areLandmarksInFrontOfCameras(), "after match to map")
 
   return ctr;
@@ -1763,13 +1811,17 @@ void Frontend::matchToMapByThread(
     size_t numKeypoints, const MapPoints& pointMap,
     size_t im, const MultiFramePtr&  multiFrame, std::vector<double>& distances,
     std::vector<LandmarkId>& lmIds, AlignedVector<Eigen::Vector4d>& hps_W,
-    std::vector<size_t>& ctrs) const {
+    std::vector<size_t>& ctrs,
+    std::vector<double>& reprErrors) const {
 
   const kinematics::Transformation T_SC = *multiFrame->T_SC(im);
   const kinematics::Transformation T_WC1 = T_WS1 * T_SC;
   const kinematics::Transformation T_CW1 = T_WC1.inverse();
 
-  const double reprojectionThreshold = params.imu.use ? 20.0 : 150.0;
+  const double f = 0.5*(multiFrame->geometryAs<CAMERA_GEOMETRY>(im)->focalLengthU()
+                   + multiFrame->geometryAs<CAMERA_GEOMETRY>(im)->focalLengthV());
+
+  const double reprojectionThreshold = params.imu.use ? 3.0+f*0.06 : 3.0+f*0.34;
   const double reprojectionThresholdSq = reprojectionThreshold * reprojectionThreshold;
 
   ctrs[threadIdx] = 0;
@@ -1825,10 +1877,13 @@ void Frontend::matchToMapByThread(
         if(dist < distances[k]) {
           distances[k] = dist;
           lmIds[k] = it->first;
+          ctrs[threadIdx]++;
+          reprErrors[threadIdx] += sqrt(reprDist.dot(reprDist));
         }
       }
     }
   }
+  reprErrors[threadIdx] /= double(ctrs[threadIdx]);
 }
 
 // Match a new multiframe to existing keyframes:
@@ -1950,6 +2005,7 @@ void Frontend::matchToMapByThreadUnitialised(
 
           distances[k] = dist;
           lmIds[k] = it->first;
+          ctrs[threadIdx]++;
           if(!isParallel) {
             hps_W[k] = hp_W;
           }
@@ -2446,12 +2502,12 @@ int Frontend::removeOutliers(Estimator &estimator,
 }
 
 // Perform 3D/2D RANSAC.
-int Frontend::runRansac3d2d(
+bool Frontend::runRansac3d2d(
     Estimator &estimator, const okvis::cameras::NCameraSystem& nCameraSystem,
     std::shared_ptr<okvis::MultiFrame> currentFrame, bool initializePose, bool removeOutliers) {
   if (estimator.numFrames() < 2) {
     // nothing to match against, we are just starting up.
-    return 1;
+    return false;
   }
 
   /////////////////////
@@ -2513,11 +2569,12 @@ int Frontend::runRansac3d2d(
     }
     //LOG(INFO) << "RANSAC success " << numInliers << " "
     //          << double(ransac.inliers_.size())/double(numCorrespondences);
+    return true;
   } else {
     LOG(INFO) << "RANSAC FAIL: " << numInliers << " inliers, ratio = "
               << double(ransac.inliers_.size())/double(numCorrespondences);
   }
-  return numInliers;
+  return false;
 }
 
 // Perform 2D/2D RANSAC.

@@ -202,8 +202,14 @@ StateId ViGraph::addStatesPropagate(const Time &timestamp,
   kinematics::Transformation T_WS = lastState.pose->estimate();
   SpeedAndBias speedAndBias = lastState.speedAndBias->estimate();
   if(imuParametersVec_.at(0).use) {
-    ceres::ImuError::propagation(imuMeasurements, imuParametersVec_.at(0), T_WS, speedAndBias,
-                                 lastState.timestamp, timestamp);
+    /*int n = */ceres::ImuError::propagation(imuMeasurements,
+                                         imuParametersVec_.at(0),
+                                         T_WS,
+                                         speedAndBias,
+                                         lastState.timestamp,
+                                         timestamp);
+    //LOG(INFO) << "n = " << n
+    //          << ", t = " << T_WS.r().transpose() << ", q = " << T_WS.q().coeffs().transpose();
   } else {
     // try and apply constant velocity model
     auto iter = states_.rbegin();

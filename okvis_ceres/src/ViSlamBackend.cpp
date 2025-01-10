@@ -172,10 +172,14 @@ double ViSlamBackend::trackingQuality(StateId id) const
     const double radius = double(std::min(rows,cols))*kptradius_;
     matchesImg.at(im) = cv::Mat::zeros(rows, cols, CV_8UC1);
     const size_t num = frame->numKeypoints(im);
+    //std::cout << "num " << im << " = " << num << std::endl;
     cv::KeyPoint keypoint;
     for (size_t k = 0; k < num; ++k) {
       frame->getCvKeypoint(im, k, keypoint);
       uint64_t lmId = frame->landmarkId(im, k);
+      //std::cout << lmId;
+      //if (lmId != 0)
+      //  std::cout << ".";
       if (lmId != 0 && realtimeGraph_.landmarkExists(LandmarkId(lmId))) {
         // make sure these are observed elsewhere
         for(const auto & obs : realtimeGraph_.landmarks_.at(LandmarkId(lmId)).observations) {
@@ -189,10 +193,12 @@ double ViSlamBackend::trackingQuality(StateId id) const
       }
     }
     // one point per image does not count.
+    //cv::imwrite("matches"+std::to_string(im)+".jpg", matchesImg.at(im));
     const int pointArea = int(radius*radius*M_PI);
     intersectionCount += std::max(0,cv::countNonZero(matchesImg.at(im)) - pointArea);
     unionCount += rows*cols - pointArea;
   }
+  //std::cout << std::endl;
   return matchedPoints < 8 ? 0.0 : double(intersectionCount)/double(unionCount);
 }
 
