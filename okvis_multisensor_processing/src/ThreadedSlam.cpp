@@ -141,10 +141,14 @@ bool ThreadedSlam::addImages(const okvis::Time & stamp,
                              const std::map<size_t, cv::Mat> & images,
                              const std::map<size_t, cv::Mat> & depthImages)
 {
+  // remove image delay:
+  // timestamp_camera_correct = timestamp_camera - image_delay
+  const Time stampCorrected = stamp - Duration(parameters_.camera.image_delay);
+
   // assemble frame
   const size_t numCameras = parameters_.nCameraSystem.numCameras();
   std::vector<okvis::CameraMeasurement> frames(numCameras);
-  frames.at(0).timeStamp = stamp; // slight hack -- always have the timestamp here.
+  frames.at(0).timeStamp = stampCorrected; // slight hack -- always have the timestamp here.
 
   bool useFrame = false;
   for(const auto & image : images) {
@@ -155,7 +159,7 @@ bool ThreadedSlam::addImages(const okvis::Time & stamp,
       } else {
         cv::cvtColor(image.second, frames.at(image.first).measurement.image, cv::COLOR_BGR2GRAY);
       }
-      frames.at(image.first).timeStamp = stamp;
+      frames.at(image.first).timeStamp = stampCorrected;
       frames.at(image.first).sensorId = image.first;
       frames.at(image.first).measurement.deliversKeypoints = false;
       useFrame = true;
@@ -165,7 +169,7 @@ bool ThreadedSlam::addImages(const okvis::Time & stamp,
   for(const auto & depthImage : depthImages) {
     if(parameters_.nCameraSystem.cameraType(depthImage.first).isUsed) {
       frames.at(depthImage.first).measurement.depthImage = depthImage.second;
-      frames.at(depthImage.first).timeStamp = stamp;
+      frames.at(depthImage.first).timeStamp = stampCorrected;
       frames.at(depthImage.first).sensorId = depthImage.first;
       frames.at(depthImage.first).measurement.deliversKeypoints = false;
     }

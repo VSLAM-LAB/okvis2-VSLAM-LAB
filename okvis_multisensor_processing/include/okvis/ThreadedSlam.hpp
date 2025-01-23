@@ -97,6 +97,8 @@ class ThreadedSlam : public ViInterface {
   /**
    * \brief             Add a set of new image.
    * \param stamp       The image timestamp.
+   * \warning           This is the original timestamp -- this function will compensate the
+   *                    image delay as timestamp_camera_correct = stamp - image_delay!
    * \param images      The images. Can be gray (8UC1) or RGB (8UC3).
    * \param depthImages The depth images as float32, in [m]
    * \return            Returns true normally. False, if previous one not processed yet.
