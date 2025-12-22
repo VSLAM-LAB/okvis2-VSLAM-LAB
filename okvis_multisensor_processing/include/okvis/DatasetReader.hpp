@@ -45,6 +45,8 @@
 
 #include <glog/logging.h>
 
+#include <yaml-cpp/yaml.h>
+
 #include <okvis/assert_macros.hpp>
 #include <okvis/Parameters.hpp>
 #include <okvis/FrameTypedefs.hpp>
@@ -70,7 +72,8 @@ public:
   /// @param numCameras The total number of cameras.
   /// @param syncCameras Camera group to force synchronisation.
   /// @param deltaT Duration [s] to skip in the beginning.
-  DatasetReader(const std::string& path, size_t numCameras, const std::set<size_t> & syncCameras,
+  DatasetReader(const std::string& path, const std::string& rgb_csv, const std::string& settings_yaml, 
+                size_t numCameras, const std::set<size_t> & syncCameras,
                 const Duration & deltaT = Duration(0.0));
 
   /// @brief Destructor: stops streaming.
@@ -104,7 +107,7 @@ public:
 private:
 
   /// @brief Read the camera csv file, that maps image filenames to timestamps.
-  int readCameraImageCsv(std::string folderString, size_t camIdx,
+  int readCameraImageCsv(const std::string& cam_name, size_t camIdx,
                          std::vector < std::pair<std::string, std::string> >& imageNames) const;
 
   /// @brief Main processing loop.
@@ -112,6 +115,8 @@ private:
   std::thread processingThread_; ///< Thread running processing loop.
 
   std::string path_; ///< Dataset path.
+  std::string rgb_csv_;
+  std::string settings_yaml_;
 
   std::atomic_bool streaming_; ///< Are we streaming?
   std::atomic_int counter_; ///< Number of images read yet.
