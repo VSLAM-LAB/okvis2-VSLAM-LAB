@@ -4,6 +4,7 @@ find_package(Boost REQUIRED COMPONENTS filesystem)
 find_package(Eigen3 REQUIRED)
 find_package(Glog REQUIRED)
 find_package(OpenCV REQUIRED core imgcodecs imgproc highgui)
+find_package(yaml-cpp REQUIRED)
 
 # Generate the configured header file
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/okvisConfig.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/include/okvis/okvisConfig.hpp" @ONLY)
@@ -49,6 +50,7 @@ target_link_libraries(${LIB_NAME}
   okvis::Time
   okvis::Timing
   okvis::Util
+  yaml-cpp::yaml-cpp
 )
 target_compile_features(${LIB_NAME} PUBLIC cxx_std_${OKVIS_CXX_STANDARD})
 target_compile_options(${LIB_NAME}

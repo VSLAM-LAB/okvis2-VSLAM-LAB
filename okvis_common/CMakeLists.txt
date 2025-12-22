@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.8...3.30)
 
 find_package(Eigen3 REQUIRED)
 find_package(Glog REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
 set(LIB_NAME okvis_common)
 add_library(${LIB_NAME}
@@ -23,6 +24,7 @@ target_include_directories(${LIB_NAME}
 )
 target_link_libraries(${LIB_NAME}
   PUBLIC
+    yaml-cpp::yaml-cpp
     Eigen3::Eigen
     okvis::CV
     okvis::Kinematics
