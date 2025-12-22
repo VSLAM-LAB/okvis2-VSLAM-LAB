@@ -1,9 +1,9 @@
 [submodule "external/ceres-solver"]
 	path = external/ceres-solver
-	url = https://ceres-solver.googlesource.com/ceres-solver
+	url = https://github.com/ceres-solver/ceres-solver.git
 [submodule "external/brisk"]
 	path = external/brisk
-	url = ../brisk.git
+	url = https://github.com/smartroboticslab/brisk.git
 [submodule "external/DBoW2"]
 	path = external/DBoW2
 	url = https://github.com/dorian3d/DBoW2.git
