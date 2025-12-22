@@ -36,6 +36,8 @@
  * @author Stefan Leutenegger
  */
 
+#include <glog/logging.h>
+
 #include <okvis/ViGraph.hpp>
 #include <okvis/assert_macros.hpp>
 #include <okvis/timing/Timer.hpp>
