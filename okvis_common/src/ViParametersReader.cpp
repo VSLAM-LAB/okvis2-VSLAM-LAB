@@ -395,12 +395,21 @@ bool ViParametersReader::getCalibrationViaConfig(
 
     if (cam["distortion_type"] && cam["distortion_coefficients"]) {
       std::vector<double> dist = cam["distortion_coefficients"].as<std::vector<double>>(); 
+      if (cam["distortion_type"].as<std::string>() == "radtan4"){
+        calib.distortionType = "radialtangential";
+        calib.distortionCoefficients.resize(4);
+        calib.distortionCoefficients << dist[0], dist[1], dist[2], dist[3];
+      }
       if (cam["distortion_type"].as<std::string>() == "radtan5"){
         calib.distortionType = "radialtangential8";
         calib.distortionCoefficients.resize(8);
         calib.distortionCoefficients << dist[0], dist[1], dist[2], dist[3], dist[4], 0.0, 0.0, 0.0;
       }
-        
+      if (cam["distortion_type"].as<std::string>() == "radtan8"){
+        calib.distortionType = "radialtangential8";
+        calib.distortionCoefficients.resize(8);
+        calib.distortionCoefficients << dist[0], dist[1], dist[2], dist[3], dist[4], dist[5], dist[6], dist[7];
+      }
       if (cam["distortion_type"].as<std::string>() == "equid4"){
         calib.distortionType = "equidistant";
         calib.distortionCoefficients.resize(4);
@@ -417,7 +426,7 @@ bool ViParametersReader::getCalibrationViaConfig(
     Eigen::Matrix4d T_SC_cam = Eigen::Map<Eigen::Matrix<double, 4, 4, Eigen::RowMajor>>(T_SC_cam_data.data());
     calib.T_SC = kinematics::Transformation(T_SC_cam.cast<double>());
 
-    calib.cameraType.isColour = false;
+    calib.cameraType.isColour = cam["cam_type"].as<std::string>().find("gray") == std::string::npos;
     calib.cameraType.depthType.isDepthCamera = false;
     calib.cameraType.depthType.createDepth = false;
     calib.cameraType.depthType.createVirtual = false;
