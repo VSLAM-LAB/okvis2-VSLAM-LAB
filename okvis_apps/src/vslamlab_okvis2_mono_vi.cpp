@@ -210,7 +210,7 @@ int main(int argc, char **argv)
                   std::placeholders::_1, std::placeholders::_2, std::placeholders::_3,
                   std::placeholders::_4));
   //estimator.setFinalTrajectoryCsvFile(sequence_path+"/okvis2-" + mode + "-final_trajectory.csv");
-  estimator.setFinalTrajectoryCsvFile(resultsPath_expId + "_" + "KeyFrameTrajectory.txt");
+  estimator.setFinalTrajectoryCsvFile(resultsPath_expId + "_" + "KeyFrameTrajectory.csv", true);
 
   estimator.setMapCsvFile(sequence_path+"/okvis2-" + mode + "-final_map.csv");
 

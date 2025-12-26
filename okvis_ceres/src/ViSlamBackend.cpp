@@ -2008,7 +2008,7 @@ bool ViSlamBackend::writeFinalCsvTrajectory(const std::string &csvFileName, bool
 
   // write description
   if(rpg) {
-    csvFile << "# timestamp tx ty tz qx qy qz qw" << std::endl;
+    csvFile << "ts (ns),tx (m),ty (m),tz (m),qx,qy,qz,qw" << std::endl;
   } else {
     csvFile << "timestamp" << ", " << "p_WS_W_x" << ", " << "p_WS_W_y" << ", "
                << "p_WS_W_z" << ", " << "q_WS_x" << ", " << "q_WS_y" << ", "
@@ -2042,9 +2042,9 @@ bool ViSlamBackend::writeFinalCsvTrajectory(const std::string &csvFileName, bool
            << state.timestamp.nsec;
     }
     if(rpg) {
-      csvFile << std::setprecision(19) << iter->second.timestamp.toSec() << " "
-          << p_WS_W[0] << " " << p_WS_W[1] << " " << p_WS_W[2] << " "
-          << q_WS.x() << " " << q_WS.y() << " " << q_WS.z() << " " << q_WS.w() << std::endl;
+      csvFile << std::setprecision(19) << iter->second.timestamp.toNSec() << ","
+          << p_WS_W[0] << "," << p_WS_W[1] << "," << p_WS_W[2] << ","
+          << q_WS.x() << "," << q_WS.y() << "," << q_WS.z() << "," << q_WS.w() << std::endl;
     } else {
       csvFile << time.str() << ", " << std::scientific
           << std::setprecision(18) << p_WS_W[0] << ", " << p_WS_W[1] << ", "
