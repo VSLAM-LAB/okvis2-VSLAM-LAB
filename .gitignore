@@ -7,3 +7,4 @@ bin/
 lib/
 external/DBoW2
 external/opengv
+install_okvis2-dev.txt
