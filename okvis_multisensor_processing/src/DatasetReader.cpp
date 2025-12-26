@@ -101,7 +101,7 @@ bool DatasetReader::startStreaming() {
 
   // open the IMU file
   std::string line;
-  imuFile_.open(path_ + "/imu.csv");
+  imuFile_.open(path_ + "/" + imu_name + ".csv");
   OKVIS_ASSERT_TRUE(Exception, imuFile_.good(), "no imu file found at " << path_+"/imu.csv");
   int number_of_lines = 0;
   while (std::getline(imuFile_, line))
@@ -185,7 +185,7 @@ int DatasetReader::readCameraImageCsv(const std::string& cam_name, size_t camIdx
     }
 
     // Required headers
-    const std::string header_ts = "ts_" + cam_name;
+    const std::string header_ts ="ts_" + cam_name + " (ns)";
     const std::string header_rgb0 = "path_" + cam_name;
 
     // Safely get indices
@@ -204,8 +204,7 @@ int DatasetReader::readCameraImageCsv(const std::string& cam_name, size_t camIdx
         std::vector<std::string> tokens = split(line, ',');
         
         // Assign variables using indices, regardless of column order
-        std::string t_str = tokens[ts_idx];
-        std::string nanoseconds = std::to_string(std::stod(t_str) * 1e9);
+        std::string nanoseconds = tokens[ts_idx];
         std::string rel_rgb0_path = tokens[rgb0_idx];
 
         imageFilenames.push_back(
@@ -464,9 +463,9 @@ void  DatasetReader::processing() {
       std::stringstream stream(line);
       std::string s;
       std::getline(stream, s, ',');
-      //uint64_t nanoseconds = std::stol(s.c_str());
+      uint64_t nanoseconds = std::stol(s.c_str());
       //uint64_t nanoseconds = uint64_t(std::stod(s.c_str()) * 10e9);
-      double seconds = std::stod(s.c_str());
+      //double seconds = std::stod(s.c_str());
 
       Eigen::Vector3d gyr;
       for (int j = 0; j < 3; ++j) {
@@ -480,8 +479,8 @@ void  DatasetReader::processing() {
         acc[j] = std::stof(s);
       }
 
-      //t_imu.fromNSec(nanoseconds);
-      t_imu.fromSec(seconds);
+      t_imu.fromNSec(nanoseconds);
+      //t_imu.fromSec(seconds);
 
       // add the IMU measurement for (blocking) processing
       if (t_imu - start + okvis::Duration(1.0) > deltaT_) {
