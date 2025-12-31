@@ -240,9 +240,9 @@ void ViParametersReader::readConfigFile(const std::string& calibration_yaml, con
   viParameters_.imu.g0 = Eigen::Vector3d(g0[0],g0[1],g0[2]);
   viParameters_.imu.g = imu["g"].as<double>();
 
-  std::vector<double> T_SC_imu_data = imu["T_SC"].as<std::vector<double>>();
-  Eigen::Matrix4d T_SC_imu = Eigen::Map<Eigen::Matrix<double, 4, 4, Eigen::RowMajor>>(T_SC_imu_data.data());  
-  viParameters_.imu.T_BS = kinematics::Transformation(T_SC_imu);
+  std::vector<double> T_BS_imu_data = imu["T_BS"].as<std::vector<double>>();
+  Eigen::Matrix4d T_BS_imu = Eigen::Map<Eigen::Matrix<double, 4, 4, Eigen::RowMajor>>(T_BS_imu_data.data());  
+  viParameters_.imu.T_BS = kinematics::Transformation(T_BS_imu);
 
   // Parameters for detection etc.
   parseEntry(file["frontend_parameters"], "detection_threshold",
@@ -422,9 +422,9 @@ bool ViParametersReader::getCalibrationViaConfig(
       calib.distortionCoefficients << 0.0, 0.0, 0.0, 0.0;
     }
 
-    std::vector<double> T_SC_cam_data = cam["T_SC"].as<std::vector<double>>();
-    Eigen::Matrix4d T_SC_cam = Eigen::Map<Eigen::Matrix<double, 4, 4, Eigen::RowMajor>>(T_SC_cam_data.data());
-    calib.T_SC = kinematics::Transformation(T_SC_cam.cast<double>());
+    std::vector<double> T_BS_cam_data = cam["T_BS"].as<std::vector<double>>();
+    Eigen::Matrix4d T_BS_cam = Eigen::Map<Eigen::Matrix<double, 4, 4, Eigen::RowMajor>>(T_BS_cam_data.data());
+    calib.T_SC = kinematics::Transformation(T_BS_cam.cast<double>());
 
     calib.cameraType.isColour = cam["cam_type"].as<std::string>().find("gray") == std::string::npos;
     calib.cameraType.depthType.isDepthCamera = false;
